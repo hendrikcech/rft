@@ -1,12 +1,12 @@
 %%%
-title = "The Naming of Hosts"
-abbrev = "The Naming of Hosts"
+title = "Robust File Transfer"
+abbrev = "RFT"
 ipr = "trust200902"
 area = "Internet"
 workgroup = "Network Working Group"
 submissiontype = "IETF"
 keyword = [""]
-#date = 1997-04-01T00:00:00Z
+#date = 2020-04-29T00:00:00Z
 
 [seriesInfo]
 name = "RFC"
@@ -15,17 +15,20 @@ stream = "IETF"
 status = "informational"
 
 [[author]]
-initials="J. R."
-surname="Ashworth"
-fullname="Jay R. Ashworth"
-abbrev = "Ashworth & Associates"
-organization = "Advanced Technology Consulting"
+initials="H."
+surname="Cech"
+fullname="Hendrik Cech"
+organization = "TUM"
   [author.address]
-  email = "jra@scfn.thpl.lib.fl.us"
-  phone = "+1 813 790 7592"
-  [author.address.postal]
-  city = "St. Petersburg"
-  code = "FL 33709-4819"
+  email = ""
+
+[[author]]
+initials="M."
+surname="Engelbart"
+fullname="Mathis Engelbart"
+organization="TUM"
+  [author.address]
+  email="mathis.engelbart@tum.de"
 %%%
 
 {mainmatter}
@@ -44,80 +47,9 @@ And, for that matter, to David Addison, who hates iambic pentameter.
 
 # Poetry
 
-{align="left"}
-~~~
-The Naming of Hosts is a difficult matter,
-    It isn't just one of your holiday games;
-You may think at first I'm as mad as a hatter
-    When I tell you, a host must have THREE DIFFERENT NAMES.
-~~~
-
-{align="left"}
-~~~
-First of all, there's the name that the users use daily,
-    Such as venus, athena, and cisco, and ames,
-Such as titan or sirius, hobbes or europa--
-    All of them sensible everyday names.
-~~~
-
-{align="left"}
-~~~
-There are fancier names if you think they sound sweeter,
-    Some for the web pages, some for the flames:
-Such as mercury, phoenix, orion, and charon--
-    But all of them sensible everyday names.
-~~~
-
-{align="left"}
-~~~
-But I tell you, a host needs a name that's particular,
-    A name that's peculiar, and more dignified,
-Else how can it keep its home page perpendicular,
-    And spread out its data, send pages world wide?
-~~~
-
-{align="left"}
-~~~
-Of names of this kind, I can give you a quorum,
-    Like lothlorien, pothole, or kobyashi-maru,
-Such as pearly-gates.vatican, or else diplomatic-
-    Names that never belong to more than one host.
-~~~
-
-{align="left"}
-~~~
-But above and beyond there's still one name left over,
-    And that is the name that you never will guess;
-The name that no human research can discover--
-    But THE NAMESERVER KNOWS, and will us'ually confess.
-~~~
-
-{align="left"}
-~~~
-When you notice a client in rapt meditation,
-    The reason, I tell you, is always the same:
-The code is engaged in a deep consultation
-    On the address, the address, the address of its name:
-~~~
-
-{align="left"}
-~~~
-            It's ineffable,
-            effable,
-            Effanineffable,
-            Deep and inscrutable,
-            singular
-            Name.
-~~~
 
 # Credits
 
-Thanks to Don Libes, Mark Lottor, and a host of twisted individuals^W^o
-Andrew Lloyd-Webber, Cameron Mackintosh, and a cast of thousands (particularly
-including Terrance Mann) who drew my attention to the necessity, and of course,
-to Thomas Stearns Eliot, for making this all necessary.
-
-[@-libes; @-lottor; @-wong; @-ts]
 
 # Security Considerations
 

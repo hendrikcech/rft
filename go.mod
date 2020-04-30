@@ -1,4 +1,4 @@
-module github.com/hendrikcech/protocol-design
+module github.com/hendrikcech/rft
 
 go 1.14
 

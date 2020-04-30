@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/hendrikcech/protocol-design/cmd"
+	"github.com/hendrikcech/rft/cmd"
 )
 
 func main() {

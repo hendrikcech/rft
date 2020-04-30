@@ -1,4 +1,4 @@
-# protocol-design
+# Protocol Design: Robust File Transfer (RFT)
 
 Protocol-Design project.
 

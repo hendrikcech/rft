@@ -35,7 +35,7 @@ func (s MsgHeader) MarshalBinary() ([]byte, error) {
 
 func (s *MsgHeader) UnmarshalBinary(data []byte) error {
 	if len(data) != 8 {
-		return fmt.Errorf("MsgHeader's size != 6")
+		return fmt.Errorf("MsgHeader's size != 8")
 	}
 
 	s.size = binary.BigEndian.Uint32(data[:4])

@@ -29,6 +29,9 @@ func (c Client) Request(host string, files []string) ([]io.Reader, error) {
 		fs = append(fs, FileRequest{0, f})
 	}
 
+	if c.Transport == nil {
+		c.Transport = &defaultRequester
+	}
 	cr := ClientRequest{fs}
 	_, err := c.Transport.Request(host, cr)
 	if err != nil {

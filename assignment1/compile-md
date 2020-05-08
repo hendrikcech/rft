@@ -10,9 +10,11 @@ fi
 
 in_file="$1"
 xml_file="$(mktemp)"
-out_file="${in_file%.*}.txt"
+txt_out_file="${in_file%.*}.txt"
+html_out_file="${in_file%.*}.html"
 
 mmark "$1" > "$xml_file"
-xml2rfc --v3 --text "$xml_file" -o "$out_file"
+xml2rfc --v3 --text "$xml_file" -o "$txt_out_file"
+xml2rfc --v3 --html "$xml_file" -o "$html_out_file"
 
 rm "$xml_file"

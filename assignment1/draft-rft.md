@@ -20,7 +20,7 @@ surname="Cech"
 fullname="Hendrik Cech"
 organization = "TUM"
   [author.address]
-  email = ""
+  email = "hendrik.cech@tum.de"
 
 [[author]]
 initials="M."
@@ -35,27 +35,42 @@ organization="TUM"
 
 # Introduction
 
-This RFC is a commentary on the difficulty of deciding upon an acceptably
-distinctive hostname for one's computer, a problem which grows in direct
-proportion to the logarithmically increasing size of the Internet.
+This RFC describes the protocol "Robust File Transfer" (RFT) that defines the interaction between a server that offers files for clients to download. The communication employs a binary protocol and messages are transferred over the network using UDP.
 
-Distribution of this memo is unlimited.
+The authors of this RFC follow the recommendations of RFC4101 "Writing Protocol Models".
 
-Except to TS Eliot.
+# Requirements
+- resumable transfers
+- reliable transfers
+    - checksum validation of transmitted files
+- adjusts transfer speeds to avoid link congestion
 
-And, for that matter, to David Addison, who hates iambic pentameter.
+# Protocol Overview
+An RFT server listens for UDP packets at a well-known port. It is assumed that clients and servers can exchange packets using UDP.
 
-# Poetry
+## File Request
+Transfers are initiated by clients who send a list of the desired files to the server. Each file is identified by their path on the server. Optionally, clients can request to not transfer the whole file but start the transfer from a specified byte offset.
+
+The server replies with the total size and checksum of each file before starting with the data transfer.
+
+TODO: how should the server indicate errors, i.e., that a file could not be found or is not readable?
+
+## Data Transfer
+
+## Transfer Termination
 
 
-# Credits
+# Dealing with network issues
+## Detecting and handling packet loss
+## Resuming transfers
+
+
+<!-- # Credits -->
 
 
 # Security Considerations
-
-Security issues are not discussed in this memo.
-
-Particularly the cardiac security of certain famous poets.
+## DDOS
+Server waits for an ACK of the file request response message before starting to send data packets.
 
 {backmatter}
 

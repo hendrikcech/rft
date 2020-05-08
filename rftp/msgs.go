@@ -21,7 +21,7 @@ func prependSize(b []byte) {
 }
 
 type MsgHeader struct {
-	size    uint32
+	size    uint16
 	version uint16
 	msgType uint16
 }
@@ -39,13 +39,13 @@ func (s MsgHeader) MarshalBinary() ([]byte, error) {
 }
 
 func (s *MsgHeader) UnmarshalBinary(data []byte) error {
-	if len(data) != 8 {
-		return fmt.Errorf("MsgHeader's size != 8")
+	if len(data) != 6 {
+		return fmt.Errorf("MsgHeader's size != 6")
 	}
 
-	s.size = binary.BigEndian.Uint32(data[:4])
-	s.version = binary.BigEndian.Uint16(data[4:6])
-	s.msgType = binary.BigEndian.Uint16(data[6:8])
+	s.size = binary.BigEndian.Uint16(data[:2])
+	s.version = binary.BigEndian.Uint16(data[2:4])
+	s.msgType = binary.BigEndian.Uint16(data[4:6])
 
 	return nil
 }
@@ -97,7 +97,7 @@ func (s *ClientRequest) UnmarshalBinary(data []byte) error {
 }
 
 type FileResponse struct {
-	fileIndex uint32
+	fileIndex uint16
 	offset    uint64
 	size      uint64
 	checkSum  [64]byte
@@ -116,11 +116,11 @@ func (fr *FileResponse) MarshalBinary() ([]byte, error) {
 }
 
 func (fr *FileResponse) UnmarshalBinary(data []byte) error {
-	fr.fileIndex = binary.BigEndian.Uint32(data[0:4])
-	fr.offset = binary.BigEndian.Uint64(data[4:12])
-	fr.size = binary.BigEndian.Uint64(data[12:20])
+	fr.fileIndex = binary.BigEndian.Uint16(data[0:2])
+	fr.offset = binary.BigEndian.Uint64(data[2:10])
+	fr.size = binary.BigEndian.Uint64(data[10:18])
 
-	cs := data[20:84]
+	cs := data[18:82]
 
 	for i, c := range cs {
 		fr.checkSum[i] = c
@@ -130,7 +130,7 @@ func (fr *FileResponse) UnmarshalBinary(data []byte) error {
 
 type Data struct {
 	header    *MsgHeader
-	fileIndex uint32
+	fileIndex uint16
 	offset    uint64
 	data      []byte
 }
@@ -147,11 +147,11 @@ func (d *Data) UnmarshalBinary(data []byte) error {
 	if d.header == nil {
 		return errors.New("header and size need to be known to decode a data packet")
 	}
-	d.fileIndex = binary.BigEndian.Uint32(data[0:4])
-	d.offset = binary.BigEndian.Uint64(data[4:12])
+	d.fileIndex = binary.BigEndian.Uint16(data[0:2])
+	d.offset = binary.BigEndian.Uint64(data[2:10])
 
 	if d.header.size > 0 {
-		d.data = data[12 : 12+d.header.size]
+		d.data = data[10 : 10+d.header.size]
 	}
 
 	return nil
@@ -159,7 +159,7 @@ func (d *Data) UnmarshalBinary(data []byte) error {
 
 type Acknowledgement struct {
 	header       *MsgHeader
-	fileIndex    uint32
+	fileIndex    uint16
 	receivedUpTo uint64
 	missing      []uint64
 }
@@ -175,9 +175,9 @@ func (a *Acknowledgement) UnmarshalBinary(data []byte) error {
 	if a.header == nil {
 		return errors.New("header and size need to be known to decode a data packet")
 	}
-	a.fileIndex = binary.BigEndian.Uint32(data[0:4])
-	a.receivedUpTo = binary.BigEndian.Uint64(data[4:12])
-	buf := bytes.NewBuffer(data[12:])
+	a.fileIndex = binary.BigEndian.Uint16(data[0:2])
+	a.receivedUpTo = binary.BigEndian.Uint64(data[2:10])
+	buf := bytes.NewBuffer(data[10:])
 
 	if a.header.size > 0 {
 		a.missing = make([]uint64, a.header.size)
@@ -187,7 +187,7 @@ func (a *Acknowledgement) UnmarshalBinary(data []byte) error {
 }
 
 type Cancel struct {
-	fileIndex uint32
+	fileIndex uint16
 }
 
 func (c Cancel) MarshalBinary() ([]byte, error) {
@@ -197,6 +197,6 @@ func (c Cancel) MarshalBinary() ([]byte, error) {
 }
 
 func (c *Cancel) UnmarshalBinary(data []byte) error {
-	c.fileIndex = binary.BigEndian.Uint32(data[:4])
+	c.fileIndex = binary.BigEndian.Uint16(data[:2])
 	return nil
 }

@@ -10,7 +10,7 @@ keyword = [""]
 
 [seriesInfo]
 name = "RFC"
-value = "2100"
+value = "draft-01"
 stream = "IETF"
 status = "informational"
 
@@ -34,7 +34,7 @@ organization="TUM"
 {mainmatter}
 
 # Introduction
-This RFC describes the protocol "Robust File Transfer" (RFT) that defines the interaction between a server that offers files for clients to download. The communication employs a binary protocol and messages are transferred over the network using UDP.
+This RFC describes the protocol "Robust File Transfer" (RFT) that defines the interaction between a server that offers files and clients that can download those files. The communication employs a binary protocol and messages are transferred over the network using UDP.
 
 The authors of this RFC follow the recommendations of RFC4101 "Writing Protocol Models".
 
@@ -42,7 +42,9 @@ The authors of this RFC follow the recommendations of RFC4101 "Writing Protocol 
 - resumable transfers
 - reliable transfers
     - checksum validation of transmitted files
-- adjusts transfer speeds to avoid link congestion
+- adjusts transfer speeds to ...
+    - adapt to the available resources of the participants
+    - avoid link congestion
 
 # Protocol Overview
 An RFT server listens for UDP packets at a well-known port. It is assumed that clients and servers can exchange packets using UDP.
@@ -95,12 +97,14 @@ The server only sends data that was requested by the client. The client only req
 The amount of data this is in-flight is limited by the respective congestion window (*cwnd*).
 
 ## Flow Control
-Client requests range of bytes from server.
+The client only requests as many bytes from the server as he can handle at once. The server keeps track of the requested byte ranges but can fulfill those requests at his own pace.
 
 ### Default fixed buffer size algorithm
 The client allocates a receive buffer of fixed size S. Initially he requests S much data.
 
-Every time the client receives data, he inserts that data into the appropriate place in the receive buffer. Then, the client checks if a contineous block of data from the start of the requested file has been received. If so, that block of data is extracted from the buffer and written to persistent storage. The client requests as much new data as necessary from the server to reach S.
+Every time the client receives data, he inserts that data into the appropriate place in the receive buffer. Then, the client checks if a contineous block of data from the start of the requested file has been received. If so, that block of data is extracted from the buffer and written to persistent storage. The client requests as much new data as necessary from the server to have again requested S byte in total.
+
+If the client suspects that packets have been lost, he should request those specific gap byte ranges again.
 
 ## Congestion Control
 
@@ -116,6 +120,8 @@ Both parties maintain a *congestion window* (*cwnd*) that is initially set to X.
 
 # Dealing with network issues
 ## Detecting and handling packet loss
+Mentioned in congestion control section.
+
 ## Resuming transfers
 
 # Security Considerations

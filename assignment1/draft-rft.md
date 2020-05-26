@@ -111,7 +111,7 @@ Every time the client receives data, he inserts that data into the appropriate p
 
 If the client suspects that packets have been lost, he should request those specific gap byte ranges again.
 
-## Congestion Control
+## Congestion Control {#CongestionControl}
 
 To avoid overstressing the network that is used for data transfer, RFT uses a congestion control mechanism, that keeps the data sending server from sending to much data at the same time. The receiving client indicates packet loss to the server as a sign to reduce the amount of data sent on the same time.
 As long as no packet loss occurs, the server might slowly increase the amount it sends out on the network.
@@ -153,6 +153,15 @@ All message types which are described in the following sections are prepended by
 *: Packet loss detected (if most significant bit = 1)
 ```
 
+The *Size* field of the header specifies the length of the RFT packet including it's header in bytes. *Number of CWND slots*, *Size of CWND* and the *packet loss bit* are used as defined in [congestion control](#CongestionControl). The field *MsgType* is a constant indicating what kind of packet is following the header. The possible types are:
+
+- 0x00: File-Request
+- 0x01: Response to File-Request
+- 0x02: Data Request
+- 0x03: Data
+
+The *Number of options* field announces the amount of options following the header, before the packet data follows. Each option is encoded as Type-Length-Value encoded option using one byte for the option type, one byte for the option length. Currently there are no global option types registered.
+
 ## File-Request
 Sent by the client.
 
@@ -177,6 +186,8 @@ Sent by the client.
 |                            ...                                |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
+
+A File-Request contains the number of requested files in its first two bytes. After another reserved (for future use) two bytes, each requested file has a section containing the lenght of the Path linking to the file, the path name itself and an offset, from which the file is to be transferred.
 
 ## Response to File Request
 Sent by the server. Presented message structure can be repeated for multiple files.
@@ -203,6 +214,8 @@ Sent by the server. Presented message structure can be repeated for multiple fil
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
 
+When responding to a File-Request, the server sends a packet, that acknowledges the requested files in a packet that contains one section per file. The first field in each files section is a file index, that points to the position of that file in the array of files, as it was requested in the corresponding File-Request. The next to bytes contain an error code, that might contain one of these error codes:
+
 ### Error codes
 - 0x00: all OK
 - 0x01: file not found
@@ -210,8 +223,12 @@ Sent by the server. Presented message structure can be repeated for multiple fil
 - 0x03: connection closed
 - ...
 
+For each file, that has the error code set to 0, the next fields contain the offset as requested in the file request, the total file size and a checksum of 32 bytes of the total file.
 
-## Request (Acknowledgement alternative)
+## Request
+
+Data requests and data packets use the same semantics for the fields as explained in the previous sections using the following structure:
+
 Sent by the client. Presented message structure can be repeated for multiple files.
 
 ```
@@ -235,7 +252,9 @@ Sent by the client. Presented message structure can be repeated for multiple fil
 
 
 ## Data
+
 Sent by the server.
+
 ```
  0                   1                   2                   3
  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1

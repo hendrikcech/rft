@@ -92,14 +92,19 @@ The server replies with the total size and checksum of each file before starting
 ## Transfer Termination
 
 # Flow and congestion control
-The server only sends data that was requested by the client. The client only requests as much data as he can buffer. 
 
-The amount of data this is in-flight is limited by the respective congestion window (*cwnd*).
+A server needs to limit the amount of data it sends in order to prevent overstressing the network or the receiving client. RFT uses the Flow Control mechanism described in [section 4.1](#FlowControl) to prevent overloading the receiver and the Congestion Control mechanism described in [section 4.2](#CongestionControl) to prevent overloading the available network resources.
 
-## Flow Control
-The client only requests as many bytes from the server as he can handle at once. The server keeps track of the requested byte ranges but can fulfill those requests at his own pace.
+
+## Flow Control {#FlowControl}
+
+As described in the protocol overview, the client periodically requests a range of data from a server. The size of the requested data range MUST never be larger than the amount of data the client is currently able to receive. A server MUST not send more data than a client requested. It is possible, that a server sends less than the requested amount of data, when the requested file is smaller than the requested amount of data or the server is otherwise limited e.g. by congestion control. If, after sending all requested bytes, the server does not receive another data request from the client, even though the file has more bytes than requested, the server may close the connection after waiting for a period longer than a specified timeout. 
+
+TODO: Specify timeout.
 
 ### Default fixed buffer size algorithm
+TODO: Decide whether we need this section. Maybe it's to much implementation detail?
+
 The client allocates a receive buffer of fixed size S. Initially he requests S much data.
 
 Every time the client receives data, he inserts that data into the appropriate place in the receive buffer. Then, the client checks if a contineous block of data from the start of the requested file has been received. If so, that block of data is extracted from the buffer and written to persistent storage. The client requests as much new data as necessary from the server to have again requested S byte in total.
@@ -108,19 +113,19 @@ If the client suspects that packets have been lost, he should request those spec
 
 ## Congestion Control
 
-The server maintains a congestion window *cwnd* that determines how many packets the server sends without receiving another request by the client. Initially *cwnd* is set to X. In each packet the server sends, it sets the *cwnd* size and the remaining number of slots until the server stops sending. The number of remaining slots is decreased by each packet. When the server receives a client request where the packet-loss bit is 0, the *cwnd* is increased by X and reset to that value.
+To avoid overstressing the network that is used for data transfer, RFT uses a congestion control mechanism, that keeps the data sending server from sending to much data at the same time. The receiving client indicates packet loss to the server as a sign to reduce the amount of data sent on the same time.
+As long as no packet loss occurs, the server might slowly increase the amount it sends out on the network.
 
-The client monitors the free-CWND-slots field of each message. If it detects a gap (while taking changes in the CWND-size field into account) and that gap is not filled after a certain duration, the client assumes that the packet was lost. The client shares this with the server by setting the packet-loss bit of the next request message to 1.
+### Detecting Packet Loss
 
-<!--
-Both server and client maintain a packet number that is inserted into every packet that they send; it is each time increased by one. By looking for gaps in the packet numbers, the other party can detect packet losses (a timeout will need to be employed because packets might arrive out of order). If a packet loss is detected, the next message of the other party will inform the sender about the packet loss.
+Each packet that a server sends is assigned to an instance of a congestion window. The server announces the size of the current congestion window in the *Size of CWND* field of the packet header. Additionally, it announces the number of packets, that can follow in the same congestion window, before a new congestion window needs to be used, in the *Number of free CWND slots* field of the packet header. A server MUST fill a congestion window, before opening a new one. A client MUST send a new data request, before a new congestion window can be opened. The client can infer whether some data packets were lost, by comparing the number of packets received for the current congestion window. If a packet is lost, the client MUST set the *packet loss bit* of the next data request to 1 and MAY re-request the missing data in a new data request. To avoid re-requesting data that is received by the client out of order, the client SHOULD wait a reasonable period of time before sending the new request.
 
-Both parties maintain a *congestion window* (*cwnd*) that is initially set to X. Each party increase their *cwnd* by some amount if they receive a packet and no packet loss occured. If packet loss occured, the *cwnd* is halfed.
-!-->
+### Handling Packet Loss
+
+If the server receives a data request with the *packet loss bit* set to *0*, it SHOULD increase the size of the next congestion window. If the server receives a data request with the *packet loss bit* set to *1*, it SHOULD decrease the size of the next congestion window.
+If the server does not receive a new data request after completely filling up a congestion window, it MAY close the connection after waiting a period of time.
 
 # Dealing with network issues
-## Detecting and handling packet loss
-Mentioned in congestion control section.
 
 ## Resuming transfers
 

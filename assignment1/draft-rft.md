@@ -33,21 +33,24 @@ organization="TUM"
 
 {mainmatter}
 
+<!-- Guideline: RFC4101 "Writing Protocol Models" -->
 # Introduction
 This RFC describes the protocol "Robust File Transfer" (RFT) that defines the interaction between a server that offers files and clients that can download those files. The communication employs a binary protocol and messages are transferred over the network using UDP.
+<!-- TODO: "reference" the UDP RFC? -->
 
-The authors of this RFC follow the recommendations of RFC4101 "Writing Protocol Models".
-
-# Requirements
+RFT secures a successful transmission even in the face of network problems such as message loss and reordering. The protocol is able to efficiently resume aborted transfers and to verify the integrity of transferred files. Transmission is performed with consideration towards the resource constraints of sender, receiver and network links.
+<!-- # Requirements
 - resumable transfers
 - reliable transfers
     - checksum validation of transmitted files
 - adjusts transfer speeds to ...
     - adapt to the available resources of the participants
-    - avoid link congestion
+    - avoid link congestion -->
+
+This RFC is structured as follows. Section 1 gives a high-level intuition over the protocol's workings. Section 2 ...
 
 # Protocol Overview
-An RFT server listens for UDP packets at a well-known port. It is assumed that clients and servers can exchange packets using UDP.
+An RFT server continuously listens for UDP packets at an address that is known to potential clients.
 
 ```
     Client                          Server
@@ -84,12 +87,20 @@ An RFT server listens for UDP packets at a well-known port. It is assumed that c
 ```
 
 ## File Request
-Transfers are initiated by clients who send a list of the desired files to the server. Each file is identified by their path on the server. Optionally, clients can request to not transfer the whole file but start the transfer from a specified byte offset.
+Transfers are initiated by clients who send a single message with a list of desired files to the server. Each file is identified by their path on the server. The position of each file in the request list determines the handle by which  the file is referred to in the subsequent data request messages. For example: The file that is first in the request list is assigned index 0, the next file index 1, and so on. 
 
-The server replies with the total size and checksum of each file before starting with the data transfer.
+The server replies with a single message that contains the total size and checksum of each file that can be served. If a file can not be served, an explanatory error code is returned for that file.
+<!-- Optionally, clients can request to not transfer the whole file but start the transfer from a specified byte offset. -->
 
 ## Data Transfer
+The client picks at least one of the desired files for which no error was returned. It sends a data request message that contains the corresponding index of that file and a byte range. The first message typically starts requesting from byte 0.
+
+The server receives the request and adds it to the request queue for that particular client. It starts fulfilling the request by sending parts of the requested byte range.
+
+The client may not to renew its request before it has been fully served  as described in the upcoming flow and congestion control section. It may adapt the size of the requested byte range and the number of concurrently requested files as discussed in the section about performance considerations.
+
 ## Transfer Termination
+Once the client has received all desired files, it may terminate the transmission program. The server may clean up any state after a timeout.
 
 # Flow and congestion control
 
@@ -121,7 +132,6 @@ As long as no packet loss occurs, the server might slowly increase the amount it
 Each packet that a server sends is assigned to an instance of a congestion window. The server announces the size of the current congestion window in the *Size of CWND* field of the packet header. Additionally, it announces the number of packets, that can follow in the same congestion window, before a new congestion window needs to be used, in the *Number of free CWND slots* field of the packet header. A server MUST fill a congestion window, before opening a new one. A client MUST send a new data request, before a new congestion window can be opened. The client can infer whether some data packets were lost, by comparing the number of packets received for the current congestion window. If a packet is lost, the client MUST set the *packet loss bit* of the next data request to 1 and MAY re-request the missing data in a new data request. To avoid re-requesting data that is received by the client out of order, the client SHOULD wait a reasonable period of time before sending the new request.
 
 ### Handling Packet Loss
-
 If the server receives a data request with the *packet loss bit* set to *0*, it SHOULD increase the size of the next congestion window. If the server receives a data request with the *packet loss bit* set to *1*, it SHOULD decrease the size of the next congestion window.
 If the server does not receive a new data request after completely filling up a congestion window, it MAY close the connection after waiting a period of time.
 

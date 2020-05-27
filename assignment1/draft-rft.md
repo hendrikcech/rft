@@ -47,9 +47,9 @@ RFT secures a successful transmission even in the face of network problems such 
     - adapt to the available resources of the participants
     - avoid link congestion -->
 
-This RFC is structured as follows. Section 1 gives a high-level intuition over the protocol's workings. Section 2 ...
+This RFC is structured as follows. (#ProtocolFlow) gives a high-level intuition over the protocol's workings. (#FlowCongestion) explains the flow and congestion control mechanisms used by RFT. The message types used are defined in (#MessageFormats).
 
-# Protocol Overview
+# Protocol flow {#ProtocolFlow}
 An RFT server continuously listens for UDP packets at an address that is known to potential clients.
 
 ```
@@ -86,64 +86,57 @@ An RFT server continuously listens for UDP packets at an address that is known t
        +                              +
 ```
 
-## File Request
+## File request
 Transfers are initiated by clients who send a single message with a list of desired files to the server. Each file is identified by their path on the server. The position of each file in the request list determines the handle by which  the file is referred to in the subsequent data request messages. For example: The file that is first in the request list is assigned index 0, the next file index 1, and so on. 
 
 The server replies with a single message that contains the total size and checksum of each file that can be served. If a file can not be served, an explanatory error code is returned for that file.
 <!-- Optionally, clients can request to not transfer the whole file but start the transfer from a specified byte offset. -->
 
-## Data Transfer
+## Data transfer
 The client picks at least one of the desired files for which no error was returned. It sends a data request message that contains the corresponding index of that file and a byte range. The first message typically starts requesting from byte 0.
 
 The server receives the request and adds it to the request queue for that particular client. It starts fulfilling the request by sending parts of the requested byte range.
 
 The client may not to renew its request before it has been fully served  as described in the upcoming flow and congestion control section. It may adapt the size of the requested byte range and the number of concurrently requested files as discussed in the section about performance considerations.
 
-## Transfer Termination
+## Transfer termination
+Once the client has received a file in total, it MAY compute the checksum and compare it with the one given by the server at connection start (see (#Checksum)).
+
 Once the client has received all desired files, it may terminate the transmission program. The server may clean up any state after a timeout.
 
-# Flow and congestion control
+## Resuming transfers
+A file transmission may have been interrupted which results in that file being only partially written to disk. An RFT client may resume the transmission of that file by starting to request data not from byte zero but from an offset.
 
-A server needs to limit the amount of data it sends in order to prevent overstressing the network or the receiving client. RFT uses the Flow Control mechanism described in [section 4.1](#FlowControl) to prevent overloading the receiver and the Congestion Control mechanism described in [section 4.2](#CongestionControl) to prevent overloading the available network resources.
+# Flow and congestion control {#FlowCongestion}
+A server needs to limit the amount of data it sends in order to prevent overstressing the network or the receiving client. RFT uses the flow control mechanism described in (#FlowControl) to prevent overloading the receiver and the congestion control mechanism described in (#CongestionControl) to prevent overloading the available network resources.
 
 
 ## Flow Control {#FlowControl}
-
-As described in the protocol overview, the client periodically requests a range of data from a server. The size of the requested data range MUST never be larger than the amount of data the client is currently able to receive. A server MUST not send more data than a client requested. It is possible, that a server sends less than the requested amount of data, when the requested file is smaller than the requested amount of data or the server is otherwise limited e.g. by congestion control. If, after sending all requested bytes, the server does not receive another data request from the client, even though the file has more bytes than requested, the server may close the connection after waiting for a period longer than a specified timeout. 
-
-TODO: Specify timeout.
-
-### Default fixed buffer size algorithm
-TODO: Decide whether we need this section. Maybe it's to much implementation detail?
-
-The client allocates a receive buffer of fixed size S. Initially he requests S much data.
-
-Every time the client receives data, he inserts that data into the appropriate place in the receive buffer. Then, the client checks if a contineous block of data from the start of the requested file has been received. If so, that block of data is extracted from the buffer and written to persistent storage. The client requests as much new data as necessary from the server to have again requested S byte in total.
-
-If the client suspects that packets have been lost, he should request those specific gap byte ranges again.
+As described in the protocol overview, a client periodically requests a range of data from a server. The size of the requested data range MUST never be larger than the amount of data the client is currently able to receive. A server MUST not send more data than a client requested. It is possible, that a server sends less than the requested amount of data, when the requested file is smaller than the requested amount of data or the server is otherwise limited, e.g., by congestion control. If, after sending all requested bytes, the server does not receive another data request from the client, even if the file has more bytes than requested, the server may close the connection after waiting for a period longer than a specified timeout (see (#Timeouts)). 
 
 ## Congestion Control {#CongestionControl}
-
-To avoid overstressing the network that is used for data transfer, RFT uses a congestion control mechanism, that keeps the data sending server from sending to much data at the same time. The receiving client indicates packet loss to the server as a sign to reduce the amount of data sent on the same time.
-As long as no packet loss occurs, the server might slowly increase the amount it sends out on the network.
+To avoid overstressing the network that is used for data transfer, RFT uses a congestion control mechanism, that prevents the server from sending an overwhelming amount of data. The receiving client informs the server about packet loss which acts as a sign to reduce the data rate.
+As long as no packet loss occurs, the server SHOULD slowly increase the sending rate.
 
 ### Detecting Packet Loss
-
-Each packet that a server sends is assigned to an instance of a congestion window. The server announces the size of the current congestion window in the *Size of CWND* field of the packet header. Additionally, it announces the number of packets, that can follow in the same congestion window, before a new congestion window needs to be used, in the *Number of free CWND slots* field of the packet header. A server MUST fill a congestion window, before opening a new one. A client MUST send a new data request, before a new congestion window can be opened. The client can infer whether some data packets were lost, by comparing the number of packets received for the current congestion window. If a packet is lost, the client MUST set the *packet loss bit* of the next data request to 1 and MAY re-request the missing data in a new data request. To avoid re-requesting data that is received by the client out of order, the client SHOULD wait a reasonable period of time before sending the new request.
+Each packet that a server sends is assigned to an instance of a congestion window. The server announces the size of the current congestion window in the *CWND size* field of the packet header. Additionally, it announces the number of packets that can follow in the same congestion window, before a new congestion window needs to be used, in the *free CWND slots* field of the packet header. A server MUST fill a congestion window, before opening a new one. A client MUST send a new data request, before a new congestion window can be opened. The client can infer whether some data packets were lost, by comparing the number of packets received for the current congestion window with the announced congestion window size. To avoid re-requesting data that is received by the client out of order, the client SHOULD wait a reasonable period of time before sending the new request. The length of this time period SHOULD be a multiple of the average time measured between receiving two data packets. If a packet is lost, the client MUST set the *packet loss bit* of the next data request to 1 and MUST re-request the missing data in a new data request, unless it decides to terminate the connection without receiving the full data. 
 
 ### Handling Packet Loss
 If the server receives a data request with the *packet loss bit* set to *0*, it SHOULD increase the size of the next congestion window. If the server receives a data request with the *packet loss bit* set to *1*, it SHOULD decrease the size of the next congestion window.
 If the server does not receive a new data request after completely filling up a congestion window, it MAY close the connection after waiting a period of time.
 
-# Dealing with network issues
+## Timeouts {#Timeouts}
 
-## Resuming transfers
+If not otherwise specified, all timeouts used in RFT, clients and servers MAY choose appropriate values depending on their specific environment and network.
 
-# Security Considerations
-## DDOS
-Server waits for an ACK of the file request response message before starting to send data packets.
+# Checksum {#Checksum}
+File checksums are computed using the SHA-256 algorithm over the whole file. [@RFC6234]
 
-# Message Formats
+The checksum may be especially useful if the client wants to resume a file transfer from an incomplete state. The checksum can indicate if the file changed in-between the last and the current transfer.
+
+# Message Formats {#MessageFormats}
+All messages are transmitted using UDP and MUST be in network byte order ("big endian").
+
 ## Header
 All message types which are described in the following sections are prepended by this header.
 
@@ -163,41 +156,33 @@ All message types which are described in the following sections are prepended by
 *: Packet loss detected (if most significant bit = 1)
 ```
 
-The *Size* field of the header specifies the length of the RFT packet including it's header in bytes. *Number of CWND slots*, *Size of CWND* and the *packet loss bit* are used as defined in [congestion control](#CongestionControl). The field *MsgType* is a constant indicating what kind of packet is following the header. The possible types are:
+The *size* field of the header specifies the length of the RFT packet including its header in bytes. *Number of CWND slots*, *size of CWND* and the *packet loss bit* are used as defined in (#CongestionControl). The field *MsgType* is a constant indicating what kind of packet is following the header. The possible types are:
 
 - 0x00: File-Request
 - 0x01: Response to File-Request
 - 0x02: Data Request
 - 0x03: Data
 
-The *Number of options* field announces the amount of options following the header, before the packet data follows. Each option is encoded as Type-Length-Value encoded option using one byte for the option type, one byte for the option length. Currently there are no global option types registered.
+The *number of options* field announces the amount of options following the header, before the packet data follows. Each option is encoded as Type-Length-Value encoded option using one byte for the option type, one byte for the option length. Currently there are no global option types registered.
 
-## File-Request
+## File Request
 Sent by the client.
 
 ```
  0                   1                   2                   3
  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|       Number of Files         |         reserved              |
+|       Number of files         |           Reserved            |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                         Offset (64 bit)                       |
-+                                                               +
-|                                                               |
+|           Length              | Path name (length-many byte) ...
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|           Length              |        Path Name (Length)    ...
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                         Offset (64 bit)                       |
-+                                                               +
-|                                                               |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|           Length              |        Path Name (Length)    ...
+|           Length              | Path name (length-many byte) ...
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 |                            ...                                |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
 
-A File-Request contains the number of requested files in its first two bytes. After another reserved (for future use) two bytes, each requested file has a section containing the lenght of the Path linking to the file, the path name itself and an offset, from which the file is to be transferred.
+A File Request contains the number of requested files in its first two bytes. After another reserved (for future use) two bytes, each requested file has a section containing the length of the path linking to the file and the path itself. The path's MUST follow the format defined in Section 3.3. of [@RFC3986].
 
 ## Response to File Request
 Sent by the server. Presented message structure can be repeated for multiple files.
@@ -207,10 +192,6 @@ Sent by the server. Presented message structure can be repeated for multiple fil
  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 |     File Index                |          Error code           |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                        Offset (64 bit)                        |
-+                                                               +
-|                                                               |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 |                         Size (64 bit)                         |
 +                                                               +
@@ -224,16 +205,15 @@ Sent by the server. Presented message structure can be repeated for multiple fil
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
 
-When responding to a File-Request, the server sends a packet, that acknowledges the requested files in a packet that contains one section per file. The first field in each files section is a file index, that points to the position of that file in the array of files, as it was requested in the corresponding File-Request. The next to bytes contain an error code, that might contain one of these error codes:
+When responding to a File-Request, the server sends a packet, that acknowledges the requested files in a packet that contains one section per file. The first field in each files section is a file index, that points to the position of that file in the array of files, as it was requested in the corresponding File-Request. The next two bytes contain an error code, that MUST contain one of these error codes:
 
-### Error codes
 - 0x00: all OK
 - 0x01: file not found
 - 0x02: temporarily not available
 - 0x03: connection closed
 - ...
 
-For each file, that has the error code set to 0, the next fields contain the offset as requested in the file request, the total file size and a checksum of 32 bytes of the total file.
+For each file, that has the error code set to 0, the next fields contain the total file size and a checksum of 32 bytes of the total file.
 
 ## Request
 
@@ -283,36 +263,3 @@ Sent by the server.
 <!-- # Credits -->
 
 {backmatter}
-
-<reference anchor='libes' target=''>
- <front>
- <title>Choosing a Name for Your Computer</title>
-  <author initials='D.' surname='Libes' fullname='D. Libes'></author>
-  <date year='1989' month='November'/>
- </front>
- <seriesInfo name="Communications of the ACM" value='Vol. 32, No. 11, Pg. 1289' />
-</reference>
-
-<reference anchor='lottor' target='namedroppers@internic.net'>
- <front>
- <title>Domain Name Survey</title>
-  <author initials='M.' surname='Lottor' fullname='M. Lottor'></author>
-  <date year='1997' month='January'/>
- </front>
-</reference>
-
-<reference anchor='wong' target='http://www.seas.upenn.edu/~mengwong/coolhosts.html'>
- <front>
- <title>Cool Hostnames</title>
-  <author initials='M.' surname='Wong' fullname='M. Wong'></author>
-  <date/>
- </front>
-</reference>
-
-<reference anchor='ts' target=''>
- <front>
- <title>Old Possum's Book of Practical Cats</title>
-  <author initials='TS' surname='Stearns' fullname='TS. Stearns'></author>
-  <date/>
- </front>
-</reference>

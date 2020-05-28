@@ -179,23 +179,19 @@ All messages are transmitted using UDP and MUST be in network byte order ("big e
 ## Header
 All message types which are described in the following sections are prepended by this header.
 
+
 ```
  0                   1                   2                   3
  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|  Size (16 bit)                |   Number of free CWND slots   |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|  Size of CWND (16 bit)        |*| Msg Type    | # of options  |
+|  Size (16 bit)                |   Msg Type    | # of options  |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 |  Option type  | Option length |   Option length-many byte    ...
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 |  Option type  | Option length |   Option length-many byte    ...
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
-*: Packet loss detected (if most significant bit = 1)
 ```
-
-<!-- TODO Move the cwnd fields to the data packet? -->
 
 The *size* field of the header specifies the total length of the RFT packet including its header in bytes.
 
@@ -262,16 +258,16 @@ For each file that has the error code set to 0, the next fields contain the tota
 
 If a large number of files is requested, the file-response sections may not fit into on UDP packet. In this case, the server SHOULD send multiple response message.
 
-## Request
-Data requests use the same semantics for the fields as explained in the previous sections using the following structure. This message is only sent by the client. The presented message structure can be repeated to request multiple byte ranges, potentially of different files.
+## Data Request
+Data requests use the same semantics for the fields as explained in the previous sections. This message is only sent by the client to the server.
 
+In data request messages, the first bit that follows the header signals if the client has detected packet loss. Subsequently, the following message structure is repeated one or more times to request multiple byte ranges, potentially of different files.
 
-<!-- TODO  16 bit after file index reserved or already part of the 64 bit offset? -->
 ```
  0                   1                   2                   3
  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|         File Index             |                              |
+|         File Index             |          Reserved            |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 |                Offset of first requested byte (64 bit)        |
 +                                                               +
@@ -287,8 +283,20 @@ Data requests use the same semantics for the fields as explained in the previous
 ```
 
 
-## Data
+## Data Packet
 Data requests and data packets use the same semantics for the fields as explained in the previous sections using the following structure.
+
+After the message header, a data packet begins with the following preamble that carries information used by congestion control.
+
+```
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|  Number of free CWND slots   |          Size of CWND          |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+
+The congestion control preamble is followed by one or more repetitions of the following data section.
 
 ```
  0                   1                   2                   3

@@ -80,7 +80,7 @@ An RFT server continuously listens for UDP packets at an address that is known t
 ```
 
 ## File request
-Connections are initiated by clients who send a single message with a list of the files that they want to fetch to the server. Each file is identified by a path that is resolved by the server. The position of each file in the request list determines the handle by which the file is referred to in the subsequent data request messages. For example: The file that appears first in the request list is assigned index 0, the next file index 1, and so on. 
+Connections are initiated by clients who send a single message with a list of the files that they want to fetch from the server. Each file is identified by a path that is resolved by the server. The position of each file in the request list determines the handle by which the file is referred to in the subsequent data request messages. For example: The file that appears first in the request list is assigned index 0, the next file index 1, and so on. 
 
 The server replies with at least one message that contains the total size and checksum of each file that can be served. If a file can not be served, an explanatory error code is returned for that file.
 <!-- Optionally, clients can request to not transfer the whole file but start the transfer from a specified byte offset. -->
@@ -156,7 +156,7 @@ The server announces the size of the current congestion window in the *CWND size
 
 A new congestion window is only opened if the server received a data request packet from the client since the start of the current congestion window. In other words, a server MUST receive a data request, before a new congestion window can be opened.
 
-The client can infer whether some data packets were lost by monitoring the *CWND size* and *free CWND slots* header fields. The number of received packets for the current congestion window will eventually equal the announced congestion window size if no packets were lost. Otherwise, a gap in the *free CWND slots* sequence will have opened. To account for out-of-order packets, the client SHOULD wait a reasonable amount of time before deciding that packet loss has opened a gap in that sequence. The length of this time period MAY be a multiple of the average time measured between receiving two data packets.
+The client can infer whether some data packets were lost by monitoring the *CWND size* and *free CWND slots* fields in a data packet. The number of received packets for the current congestion window will eventually equal the announced congestion window size if no packets were lost. Otherwise, a gap in the *free CWND slots* sequence will have opened. To account for out-of-order packets, the client SHOULD wait a reasonable amount of time before deciding that packet loss has opened a gap in that sequence. The length of this time period MAY be a multiple of the average time measured between receiving two data packets.
 
 If packet loss has been detected, the client MUST set the *packet loss bit* of the next data request to 1 and MUST re-request the missing data in a new data request, unless it decides to terminate the connection without receiving the full data.
 
@@ -184,7 +184,7 @@ All message types which are described in the following sections are prepended by
  0                   1                   2                   3
  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|  Size (16 bit)                |   Msg Type    | # of options  |
+|  Size (16 bit)                |L|  Msg Type   | # of options  |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 |  Option type  | Option length |   Option length-many byte    ...
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -195,7 +195,7 @@ All message types which are described in the following sections are prepended by
 
 The *size* field of the header specifies the total length of the RFT packet including its header in bytes.
 
-*Number of CWND slots*, *size of CWND* and the *packet loss bit* are used as defined in (#CongestionControl). The CWND fields are only used by data packets sent by the server. In all other message they SHOULD be set to zero. The packet loss bit is only relevant in messages sent by the client.
+The first bit of the *MsgType* byte, labeled with *L* can be used by a client to signal packet loss to a server as defined in (#CongestionControl).
 
 The field *MsgType* is a constant indicating what kind of packet is following the header. The possible types are:
 - 0x00: File-Request
@@ -223,8 +223,6 @@ Sent by the client.
 ```
 
 A File Request contains the number of requested files in its first two bytes. After another reserved (for future use) two bytes, each requested file has a section containing the length of the path linking to the file and the path itself. The path's MUST follow the format defined in Section 3.3. of [@RFC3986].
-
-<!-- TODO: byte range end inclusive or exclusive? better exclusive -->
 
 ## Response to File Request
 Sent by the server. Presented message structure can be repeated for multiple files.
@@ -256,24 +254,24 @@ When responding to a File-Request, the server sends acknowledges the requested f
 
 For each file that has the error code set to 0, the next fields contain the total file size and a checksum of the total file (32 bytes large).
 
-If a large number of files is requested, the file-response sections may not fit into on UDP packet. In this case, the server SHOULD send multiple response message.
+If a large number of files is requested, the file-response sections may not fit into on UDP packet. In this case, the server SHOULD send multiple response messages.
 
 ## Data Request
 Data requests use the same semantics for the fields as explained in the previous sections. This message is only sent by the client to the server.
 
-In data request messages, the first bit that follows the header signals if the client has detected packet loss. Subsequently, the following message structure is repeated one or more times to request multiple byte ranges, potentially of different files.
+The following message structure is repeated one or more times to request multiple byte ranges, potentially of different files.
 
 ```
  0                   1                   2                   3
  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|         File Index             |          Reserved            |
+|         File Index            |           Reserved            |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 |                Offset of first requested byte (64 bit)        |
 +                                                               +
 |                                                               |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                Offset of last requested byte (64 bit)         |
+|                Offset of last requested byte + 1 (64 bit)     |
 +                                                               +
 |                                                               |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -281,6 +279,8 @@ In data request messages, the first bit that follows the header signals if the c
 +                                                               +
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
+
+The *Offset of first requested byte* points to the first requested byte of a range, while the *Offset of last requested byte* points to the first byte that is following the requested range.
 
 
 ## Data Packet
@@ -292,9 +292,11 @@ After the message header, a data packet begins with the following preamble that 
  0                   1                   2                   3
  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|  Number of free CWND slots   |          Size of CWND          |
+|  Number of free CWND slots    |         Size of CWND          |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
+
+*Number of CWND slots* and *size of CWND* are used as defined in (#CongestionControl). The CWND fields are only used by data packets sent by the server. 
 
 The congestion control preamble is followed by one or more repetitions of the following data section.
 

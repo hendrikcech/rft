@@ -35,7 +35,7 @@ organization="TUM"
 
 <!-- Guideline: RFC4101 "Writing Protocol Models" -->
 # Introduction
-This RFC describes the protocol "Robust File Transfer" (RFT) that defines the interaction between a server that offers files and clients that can download those files. The communication employs a binary protocol and messages are transferred over the network using UDP.  <!-- [@RFC768]. -->
+This RFC describes the protocol "Robust File Transfer" (RFT) that defines the interaction between a server that offers files and clients that can download those files. The communication employs a binary protocol and messages are transferred over the network using UDP [@RFC0768].
 
 RFT secures successful file transmissions even in the face of network problems such as message loss and reordering. The protocol is able to efficiently resume aborted transfers and to verify the integrity of transferred files. Transmission is performed with consideration towards the resource constraints of sender, receiver and network links.
 

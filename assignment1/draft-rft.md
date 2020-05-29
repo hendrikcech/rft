@@ -39,7 +39,7 @@ This RFC describes the protocol "Robust File Transfer" (RFT) that defines the in
 
 RFT secures successful file transmissions even in the face of network problems such as message loss and reordering. The protocol is able to efficiently resume aborted transfers and to verify the integrity of transferred files. Transmission is performed with consideration towards the resource constraints of sender, receiver and network links.
 
-This RFC is structured as follows. (#ProtocolFlow) gives a high-level intuition over the protocol's workings. (#FlowCongestion) explains the flow and congestion control mechanisms used by RFT. The message types used are defined in (#MessageFormats).
+This RFC is structured as follows. (#ProtocolFlow) introduces the protocol behaviour and gives an intuition about its functionalities. (#FlowCongestion) explains the flow and congestion control mechanisms used by RFT. (#Checksum) provides details about the usage of checksums in RFT. The message types used are defined in (#MessageFormats).
 
 
 # Protocol flow {#ProtocolFlow}
@@ -57,7 +57,7 @@ An RFT server continuously listens for UDP packets at an address that is known t
        |                              |     .
        |                              |     .
        |                              |     .
-       |  Request byte range of file  |     - Data transmission phase
+       |  Request byte range of file  |     - Data transfer phase
        | +--------------------------> |     .
        |                              |     .
        |                              |     .
@@ -109,7 +109,7 @@ A server needs to limit the amount of data it sends to not overwhelm the network
 ## Flow Control {#FlowControl}
 As described in (#ProtocolFlow), a client periodically requests a range of data from the server. The size of the requested data range MUST never be larger than the amount of data that the client is currently able to receive. The client SHOULD adapt the amount of concurrently requested data and its data timing to improve transmission speed.
 
-A server MUST NOT send more data than a client requested. It is possible, that a server sends less than the requested amount of data, when the requested file is smaller than the requested amount of data or the server is otherwise limited, e.g., by congestion control. A server MUST only send requested byte ranges of requested files.
+A server MUST NOT send more data than a client requested. A server MAY send less than the requested amount of data, when the requested file is smaller than the requested amount of data or the server is otherwise limited, e.g., by congestion control. A server MUST only send requested byte ranges of requested files.
 
 If, after sending all requested bytes, the server does not receive another data request from the client, even if the file has more bytes than requested, the server SHOULD close the connection after waiting for a period longer than a specified timeout (see (#Timeouts)).
 
@@ -196,6 +196,7 @@ All message types which are described in the following sections are prepended by
 The *size* field of the header specifies the total length of the RFT packet including its header in bytes.
 
 The field *MsgType* is a constant indicating what kind of packet is following the header. The possible types are:
+
 - 0x00: File-Request
 - 0x01: Response to File-Request
 - 0x02: Data Request without indicating packet loss
@@ -221,10 +222,10 @@ Sent by the client.
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
 
-A File Request contains the number of requested files in its first two bytes. After another reserved (for future use) two bytes, each requested file has a section containing the length of the path linking to the file and the path itself. The path's MUST follow the format defined in Section 3.3. of [@RFC3986].
+A File Request contains the number of requested files in its first two bytes. After another reserved (for future use) two bytes, each requested file has a section containing the length of the path linking to the file and the path itself. The paths MUST follow the format defined in Section 3.3. of [@RFC3986].
 
 ## Response to File Request
-Sent by the server. Presented message structure can be repeated for multiple files.
+Sent by the server. Presented message structure can be repeated in a single message for multiple files.
 
 ```
  0                   1                   2                   3
@@ -253,12 +254,10 @@ When responding to a File-Request, the server sends acknowledges the requested f
 
 For each file that has the error code set to 0, the next fields contain the total file size and a checksum of the total file (32 bytes large).
 
-If a large number of files is requested, the file-response sections may not fit into on UDP packet. In this case, the server SHOULD send multiple response messages.
+If a large number of files is requested, the file-response sections may not fit into one UDP packet. In this case, the server SHOULD send multiple response messages.
 
 ## Data Request
-Data requests use the same semantics for the fields as explained in the previous sections. This message is only sent by the client to the server.
-
-The following message structure is repeated one or more times to request multiple byte ranges, potentially of different files.
+This message is only sent by the client to the server. The *file index* field is to be understood as previously defined. The offsets are specified in byte. The *offset of first requested byte* points to the first requested byte of a range, while the *offset of last requested byte* points to the first byte that is following the requested range. In other words: the start offset is inclusive, the end offset exclusive. The following message structure can appear more than once to request multiple byte ranges, potentially of different files.
 
 ```
  0                   1                   2                   3
@@ -266,12 +265,12 @@ The following message structure is repeated one or more times to request multipl
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 |         File Index            |           Reserved            |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                Offset of first requested byte (64 bit)        |
-+                                                               +
+|            Offset of first requested byte (64 bit)            |
++                          (inclusive)                          +
 |                                                               |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                Offset of last requested byte + 1 (64 bit)     |
-+                                                               +
+|            Offset of last requested byte (64 bit)             |
++                          (exclusive)                          +
 |                                                               |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 |                             ...                               |
@@ -279,13 +278,11 @@ The following message structure is repeated one or more times to request multipl
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
 
-The *Offset of first requested byte* points to the first requested byte of a range, while the *Offset of last requested byte* points to the first byte that is following the requested range.
-
 
 ## Data Packet
-Data requests and data packets use the same semantics for the fields as explained in the previous sections using the following structure.
-
-After the message header, a data packet begins with the following preamble that carries information used by congestion control.
+Data packets are sent by the server to the client.
+They begin with the regular message header which is followed by the now-presented CWND preamble.
+*Number of CWND slots* and *size of CWND* are used as defined in (#CongestionControl). 
 
 ```
  0                   1                   2                   3
@@ -295,9 +292,9 @@ After the message header, a data packet begins with the following preamble that 
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
 
-*Number of CWND slots* and *size of CWND* are used as defined in (#CongestionControl). The CWND fields are only used by data packets sent by the server. 
 
 The congestion control preamble is followed by one or more repetitions of the following data section.
+The *file index field* is to be interpreted as previously defined. The *offset* field works analogously to the offset fields of the data request message, i.e., it specifies the starting point of the following data.
 
 ```
  0                   1                   2                   3

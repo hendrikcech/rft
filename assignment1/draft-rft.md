@@ -152,16 +152,16 @@ Client (C)         Server (S)
 ### Detecting Packet Loss
 Each data packet that a server sends is assigned to an instance of a congestion window ("CWND"). A congestion window has a certain size that is measured in "number of packets". In addition, the server keeps track of the number of free CWND slots; this number is decreased by one for each data packet that is sent to the client.
 
-The server announces the size of the current congestion window in the *CWND size* field of the packet header. Additionally, it announces the number of packets that can follow in the same congestion window, before a new congestion window needs to be used, in the *free CWND slots* field of the packet header. A server MUST fill a congestion window, before opening a new one, i.e., a packet with zero *free CWND slots* MUST be send by the server.
+The server announces the size of the current congestion window in the *CWND size* field of the packet header. Additionally, it announces the number of packets that can follow in the same congestion window, before a new congestion window needs to be used, in the *free CWND slots* field of the data packet. A server MUST fill a congestion window, before opening a new one, i.e., a packet with zero *free CWND slots* MUST be send by the server.
 
 A new congestion window is only opened if the server received a data request packet from the client since the start of the current congestion window. In other words, a server MUST receive a data request, before a new congestion window can be opened.
 
 The client can infer whether some data packets were lost by monitoring the *CWND size* and *free CWND slots* fields in a data packet. The number of received packets for the current congestion window will eventually equal the announced congestion window size if no packets were lost. Otherwise, a gap in the *free CWND slots* sequence will have opened. To account for out-of-order packets, the client SHOULD wait a reasonable amount of time before deciding that packet loss has opened a gap in that sequence. The length of this time period MAY be a multiple of the average time measured between receiving two data packets.
 
-If packet loss has been detected, the client MUST set the *packet loss bit* of the next data request to 1 and MUST re-request the missing data in a new data request, unless it decides to terminate the connection without receiving the full data.
+If packet loss has been detected, the client MUST set the *MsgType* of the next data request to *0x03* (as described in (#Header)) and MUST re-request the missing data in a new data request, unless it decides to terminate the connection without receiving the full data.
 
 ### Handling Packet Loss
-If the server receives a data request with the *packet loss bit* set to *0*, it SHOULD increase the size of the next congestion window. If the server receives a data request with the *packet loss bit* set to *1*, it SHOULD decrease the size of the next congestion window.
+If the server receives a data request with the *MsgType* set to *0x02* (indicating no packet loss occured), it SHOULD increase the size of the next congestion window. If the server receives a data request with the *MsgType* set to *0x03*, it SHOULD decrease the size of the next congestion window.
 
 If the server does not receive a new data request after completely filling up a congestion window, it MAY close the connection after waiting a reasonable amount of time.
 
@@ -176,7 +176,7 @@ A checksum may be especially useful if the client wants to resume a file transfe
 # Message Formats {#MessageFormats}
 All messages are transmitted using UDP and MUST be in network byte order ("big endian").
 
-## Header
+## Header {#Header}
 All message types which are described in the following sections are prepended by this header.
 
 
@@ -184,7 +184,7 @@ All message types which are described in the following sections are prepended by
  0                   1                   2                   3
  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|  Size (16 bit)                |L|  Msg Type   | # of options  |
+|  Size (16 bit)                |    Msg Type   | # of options  |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 |  Option type  | Option length |   Option length-many byte    ...
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -195,13 +195,12 @@ All message types which are described in the following sections are prepended by
 
 The *size* field of the header specifies the total length of the RFT packet including its header in bytes.
 
-The first bit of the *MsgType* byte, labeled with *L* can be used by a client to signal packet loss to a server as defined in (#CongestionControl).
-
 The field *MsgType* is a constant indicating what kind of packet is following the header. The possible types are:
 - 0x00: File-Request
 - 0x01: Response to File-Request
-- 0x02: Data Request
-- 0x03: Data
+- 0x02: Data Request without indicating packet loss
+- 0x03: Data Request indicating packet loss
+- 0x04: Data
 
 The *number of options* field announces the amount of options following the header, before the packet data follows. Each option is encoded as type-length-value (TLV) encoded option using one byte for the option type and one byte for the option length. Currently there are no global option types registered.
 

@@ -294,19 +294,19 @@ They begin with the regular message header which is followed by the now-presente
 
 
 The congestion control preamble is followed by one or more repetitions of the following data section.
-The *file index field* is to be interpreted as previously defined. The *offset* field works analogously to the offset fields of the data request message, i.e., it specifies the starting point of the following data.
+The *file index field* is to be interpreted as previously defined. The *Size* field indicates the amount of bytes of the same file are following after the *Offset* field. The *offset* field works analogously to the offset fields of the data request message, i.e., it specifies the starting point of the following data.
 
 ```
  0                   1                   2                   3
  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|           File Index          |       reserved                |
+|           File Index          |          Size                 |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 |                      Offset (64 bit)                          |
 +                                                               +
 |                                                               |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                   Data (size from header)                    ...
+|                   Data (Size)                                ...
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
 

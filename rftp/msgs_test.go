@@ -24,9 +24,24 @@ func checkErrWithMsg(t *testing.T, err error, msg string) {
 }
 
 func TestMsgHeaderMarshalling(t *testing.T) {
-	h := MsgHeader{12, 13, 14}
+	tests := map[string]MsgHeader{
+		"zero": {
+			version:   0,
+			msgType:   0,
+			optionLen: 0,
+		},
+		"version1": {
+			version:   1,
+			msgType:   0,
+			optionLen: 0,
+		},
+	}
 
-	testConversion(t, &h, &MsgHeader{})
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			testConversion(t, &tc, &MsgHeader{})
+		})
+	}
 }
 
 func TestClientRequestMarshalling(t *testing.T) {
@@ -64,17 +79,16 @@ func TestFileRequestMarshalling(t *testing.T) {
 
 func TestDataMarshalling(t *testing.T) {
 	tests := map[string]Data{
-		"empty": {header: &MsgHeader{0, 0, msgData}},
+		"empty": {},
 		"zero": {
-			header:    &MsgHeader{0, 0, msgData},
 			fileIndex: 0,
 			offset:    0,
 		},
-		"non-zero": {&MsgHeader{9, 0, msgData}, 0, 0, []byte("some data")},
+		"non-zero": {0, 0, []byte("some data")},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			r := &Data{header: tc.header}
+			r := &Data{}
 			testConversion(t, &tc, r)
 		})
 	}
@@ -82,12 +96,12 @@ func TestDataMarshalling(t *testing.T) {
 
 func TestAcknowledgementMarshalling(t *testing.T) {
 	tests := map[string]Acknowledgement{
-		"no-missing": {&MsgHeader{0, 0, 0}, 0, 0, nil},
-		"missing":    {&MsgHeader{3, 0, 0}, 0, 0, []uint64{0, 1, 2}},
+		"no-missing": {0, 0, nil},
+		"missing":    {0, 0, []uint64{0, 1, 2}},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			r := &Acknowledgement{header: tc.header}
+			r := &Acknowledgement{}
 			testConversion(t, &tc, r)
 		})
 	}

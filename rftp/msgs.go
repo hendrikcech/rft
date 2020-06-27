@@ -3,7 +3,6 @@ package rftp
 import (
 	"bytes"
 	"encoding/binary"
-	"errors"
 	"fmt"
 )
 
@@ -20,32 +19,66 @@ func prependSize(b []byte) {
 	binary.BigEndian.PutUint16(b[:2], uint16(len(b)))
 }
 
-type MsgHeader struct {
-	size    uint16
-	version uint16
-	msgType uint16
+type option struct {
+	otype  uint8
+	length uint8
+	value  []byte
 }
 
-func NewMsgHeader(msgType uint16) MsgHeader {
-	return MsgHeader{0, 0, msgType}
+func (o *option) UnmarshalBinary(data []byte) error {
+	panic("not implemented") // TODO: Implement
+}
+
+func (o *option) MarshalBinary() (data []byte, err error) {
+	panic("not implemented") // TODO: Implement
+}
+
+type MsgHeader struct {
+	version   uint8
+	msgType   uint8
+	optionLen uint8
+	options   []option
+}
+
+func NewMsgHeader(msgType uint8, os ...option) MsgHeader {
+	olen := len(os)
+	if olen > 255 {
+		// TODO: Don't panic? Maybe return error
+		panic("too many options")
+	}
+
+	return MsgHeader{
+		version:   0,
+		msgType:   0,
+		optionLen: uint8(olen),
+		options:   os,
+	}
 }
 
 func (s MsgHeader) MarshalBinary() ([]byte, error) {
 	buf := new(bytes.Buffer)
-	binary.Write(buf, binary.BigEndian, s.size)
-	binary.Write(buf, binary.BigEndian, s.version)
-	binary.Write(buf, binary.BigEndian, s.msgType)
+	vt := s.version<<4 ^ s.msgType
+	binary.Write(buf, binary.BigEndian, vt)
+	binary.Write(buf, binary.BigEndian, s.optionLen)
+	for _, o := range s.options {
+		ob, err := o.MarshalBinary()
+		if err != nil {
+			return nil, err
+		}
+		buf.Write(ob)
+	}
+
 	return buf.Bytes(), nil
 }
 
 func (s *MsgHeader) UnmarshalBinary(data []byte) error {
-	if len(data) != 6 {
-		return fmt.Errorf("MsgHeader's size != 6")
+	if len(data) < 2 {
+		return fmt.Errorf("MsgHeader too short")
 	}
-
-	s.size = binary.BigEndian.Uint16(data[:2])
-	s.version = binary.BigEndian.Uint16(data[2:4])
-	s.msgType = binary.BigEndian.Uint16(data[4:6])
+	vt := uint8(data[0])
+	s.version = vt & 0xF0 >> 4
+	s.msgType = vt & 0x0F
+	s.optionLen = uint8(data[1])
 
 	return nil
 }
@@ -129,7 +162,6 @@ func (fr *FileResponse) UnmarshalBinary(data []byte) error {
 }
 
 type Data struct {
-	header    *MsgHeader
 	fileIndex uint16
 	offset    uint64
 	data      []byte
@@ -140,25 +172,20 @@ func (d Data) MarshalBinary() ([]byte, error) {
 	binary.Write(buf, binary.BigEndian, d.fileIndex)
 	binary.Write(buf, binary.BigEndian, d.offset)
 	_, err := buf.Write(d.data)
-	return buf.Bytes(), err
+	bs := buf.Bytes()
+	return bs, err
 }
 
 func (d *Data) UnmarshalBinary(data []byte) error {
-	if d.header == nil {
-		return errors.New("header and size need to be known to decode a data packet")
-	}
 	d.fileIndex = binary.BigEndian.Uint16(data[0:2])
 	d.offset = binary.BigEndian.Uint64(data[2:10])
-
-	if d.header.size > 0 {
-		d.data = data[10 : 10+d.header.size]
+	if len(data) > 10 {
+		d.data = data[10:]
 	}
-
 	return nil
 }
 
 type Acknowledgement struct {
-	header       *MsgHeader
 	fileIndex    uint16
 	receivedUpTo uint64
 	missing      []uint64
@@ -168,21 +195,24 @@ func (a Acknowledgement) MarshalBinary() ([]byte, error) {
 	buf := new(bytes.Buffer)
 	binary.Write(buf, binary.BigEndian, a.fileIndex)
 	binary.Write(buf, binary.BigEndian, a.receivedUpTo)
-	binary.Write(buf, binary.BigEndian, a.missing)
-	return buf.Bytes(), nil
+	if len(a.missing) > 0 {
+		binary.Write(buf, binary.BigEndian, a.missing)
+	}
+	bs := buf.Bytes()
+	return bs, nil
 }
 func (a *Acknowledgement) UnmarshalBinary(data []byte) error {
-	if a.header == nil {
-		return errors.New("header and size need to be known to decode a data packet")
-	}
 	a.fileIndex = binary.BigEndian.Uint16(data[0:2])
 	a.receivedUpTo = binary.BigEndian.Uint64(data[2:10])
-	buf := bytes.NewBuffer(data[10:])
 
-	if a.header.size > 0 {
-		a.missing = make([]uint64, a.header.size)
+	if len(data) > 10 {
+		a.missing = make([]uint64, len(data[10:])/8)
+		buf := bytes.NewBuffer(data[10:])
+		err := binary.Read(buf, binary.BigEndian, a.missing)
+		if err != nil {
+			return err
+		}
 	}
-	binary.Read(buf, binary.BigEndian, a.missing)
 	return nil
 }
 

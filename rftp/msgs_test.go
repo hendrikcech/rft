@@ -29,11 +29,15 @@ func TestMsgHeaderMarshalling(t *testing.T) {
 			version:   0,
 			msgType:   0,
 			optionLen: 0,
+
+			hdrLen: 2,
 		},
 		"version1": {
 			version:   1,
 			msgType:   0,
 			optionLen: 0,
+
+			hdrLen: 2,
 		},
 	}
 

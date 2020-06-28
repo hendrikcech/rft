@@ -24,15 +24,17 @@ type Client struct {
 }
 
 func (c Client) Request(host string, files []string) ([]io.Reader, error) {
-	fs := []FileRequest{}
+	fs := []FileDescriptor{}
 	for _, f := range files {
-		fs = append(fs, FileRequest{0, f})
+		fs = append(fs, FileDescriptor{0, f})
 	}
 
 	if c.Transport == nil {
 		c.Transport = &defaultRequester
 	}
-	cr := ClientRequest{fs}
+	cr := ClientRequest{
+		files: fs,
+	}
 	_, err := c.Transport.Request(host, cr)
 	if err != nil {
 		return nil, err

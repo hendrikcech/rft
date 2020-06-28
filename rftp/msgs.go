@@ -3,7 +3,9 @@ package rftp
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
+	"math"
 )
 
 const (
@@ -95,22 +97,31 @@ func (s *MsgHeader) UnmarshalBinary(data []byte) error {
 }
 
 type ClientRequest struct {
-	files []FileRequest
+	maxTransmissionRate uint32
+	files               []FileDescriptor
 }
 
-type FileRequest struct {
-	offset uint64
-	path   string
+type FileDescriptor struct {
+	offset   uint64
+	fileName string
 }
+
+var maxFileOffset = uint64(math.Pow(2, 56)) - 1
 
 func (s ClientRequest) MarshalBinary() ([]byte, error) {
 	buf := new(bytes.Buffer)
 
+	binary.Write(buf, binary.BigEndian, s.maxTransmissionRate)
 	binary.Write(buf, binary.BigEndian, uint16(len(s.files)))
 
 	for _, file := range s.files {
-		binary.Write(buf, binary.BigEndian, file.offset)
-		pathBin := []byte(file.path)
+		if file.offset > maxFileOffset {
+			return nil, errors.New("file offset to big")
+		}
+
+		binary.Write(buf, binary.BigEndian, sevenByteOffset(file.offset))
+
+		pathBin := []byte(file.fileName)
 		binary.Write(buf, binary.BigEndian, uint16(len(pathBin)))
 		buf.Write(pathBin)
 	}
@@ -119,125 +130,169 @@ func (s ClientRequest) MarshalBinary() ([]byte, error) {
 }
 
 func (s *ClientRequest) UnmarshalBinary(data []byte) error {
-	numFiles := binary.BigEndian.Uint16(data[:2])
+	s.maxTransmissionRate = binary.BigEndian.Uint32(data[:4])
+	numFiles := binary.BigEndian.Uint16(data[4:6])
 
 	if numFiles == 0 {
 		return nil
 	}
 
-	s.files = make([]FileRequest, numFiles)
+	s.files = make([]FileDescriptor, numFiles)
 
-	dataLens := data[2:]
+	dataLens := data[6:]
 	for i := uint16(0); i < numFiles; i++ {
-		f := FileRequest{}
-		f.offset = binary.BigEndian.Uint64(dataLens[:8])
-		pathLen := binary.BigEndian.Uint16(dataLens[8:10])
-		f.path = string(dataLens[10 : 10+pathLen])
-		dataLens = dataLens[10+pathLen:]
+		f := FileDescriptor{}
+		f.offset = uintOffset(dataLens[:7])
+		pathLen := binary.BigEndian.Uint16(dataLens[7:9])
+		f.fileName = string(dataLens[9 : 9+pathLen])
+		dataLens = dataLens[9+pathLen:]
 		s.files[i] = f
 	}
 
 	return nil
 }
 
-type FileResponse struct {
+type ServerMetaData struct {
+	status    uint8
 	fileIndex uint16
-	offset    uint64
 	size      uint64
 	checkSum  [64]byte
 }
 
-func (fr *FileResponse) MarshalBinary() ([]byte, error) {
+func (s ServerMetaData) MarshalBinary() ([]byte, error) {
 	buf := new(bytes.Buffer)
-	binary.Write(buf, binary.BigEndian, fr.fileIndex)
-	binary.Write(buf, binary.BigEndian, fr.offset)
-	binary.Write(buf, binary.BigEndian, fr.size)
-	_, err := buf.Write(fr.checkSum[:])
+	binary.Write(buf, binary.BigEndian, byte(0))
+	binary.Write(buf, binary.BigEndian, s.status)
+	binary.Write(buf, binary.BigEndian, s.fileIndex)
+	binary.Write(buf, binary.BigEndian, s.size)
+	_, err := buf.Write(s.checkSum[:])
 	if err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), err
 }
 
-func (fr *FileResponse) UnmarshalBinary(data []byte) error {
-	fr.fileIndex = binary.BigEndian.Uint16(data[0:2])
-	fr.offset = binary.BigEndian.Uint64(data[2:10])
-	fr.size = binary.BigEndian.Uint64(data[10:18])
+func (s *ServerMetaData) UnmarshalBinary(data []byte) error {
+	s.status = uint8(data[1])
+	s.fileIndex = binary.BigEndian.Uint16(data[2:4])
+	s.size = binary.BigEndian.Uint64(data[4:12])
 
-	cs := data[18:82]
+	cs := data[12:76]
 
 	for i, c := range cs {
-		fr.checkSum[i] = c
+		s.checkSum[i] = c
 	}
 	return nil
 }
 
-type Data struct {
+type ServerPayload struct {
 	fileIndex uint16
+	ackNumber uint8
 	offset    uint64
 	data      []byte
 }
 
-func (d Data) MarshalBinary() ([]byte, error) {
+func (s ServerPayload) MarshalBinary() ([]byte, error) {
 	buf := new(bytes.Buffer)
-	binary.Write(buf, binary.BigEndian, d.fileIndex)
-	binary.Write(buf, binary.BigEndian, d.offset)
-	_, err := buf.Write(d.data)
+	binary.Write(buf, binary.BigEndian, s.fileIndex)
+	binary.Write(buf, binary.BigEndian, s.ackNumber)
+	binary.Write(buf, binary.BigEndian, sevenByteOffset(s.offset))
+
+	_, err := buf.Write(s.data)
 	bs := buf.Bytes()
 	return bs, err
 }
 
-func (d *Data) UnmarshalBinary(data []byte) error {
-	d.fileIndex = binary.BigEndian.Uint16(data[0:2])
-	d.offset = binary.BigEndian.Uint64(data[2:10])
+func (s *ServerPayload) UnmarshalBinary(data []byte) error {
+	s.fileIndex = binary.BigEndian.Uint16(data[0:2])
+	s.ackNumber = uint8(data[2])
+
+	s.offset = uintOffset(data[3:10])
+
 	if len(data) > 10 {
-		d.data = data[10:]
+		s.data = data[10:]
 	}
 	return nil
 }
 
-type Acknowledgement struct {
-	fileIndex    uint16
-	receivedUpTo uint64
-	missing      []uint64
+type ResendEntry struct {
+	fileIndex uint16
+	offset    uint64
+	length    uint8
 }
 
-func (a Acknowledgement) MarshalBinary() ([]byte, error) {
+type ClientAck struct {
+	ackNumber           uint8
+	fileIndex           uint16
+	status              uint8
+	maxTransmissionRate uint32
+	offset              uint64
+	resendEntries       []ResendEntry
+}
+
+// make offset BigEndian and cut off the first (most significant) byte
+func sevenByteOffset(offset uint64) []byte {
+	offsetBuffer := new(bytes.Buffer)
+	binary.Write(offsetBuffer, binary.BigEndian, offset)
+	return offsetBuffer.Bytes()[1:]
+}
+
+// pad 7 byte with another zero byte to make reading easy
+func uintOffset(seven []byte) uint64 {
+	offsetPad := append([]byte{0}, seven...)
+	return binary.BigEndian.Uint64(offsetPad)
+}
+
+func (c ClientAck) MarshalBinary() ([]byte, error) {
 	buf := new(bytes.Buffer)
-	binary.Write(buf, binary.BigEndian, a.fileIndex)
-	binary.Write(buf, binary.BigEndian, a.receivedUpTo)
-	if len(a.missing) > 0 {
-		binary.Write(buf, binary.BigEndian, a.missing)
+	binary.Write(buf, binary.BigEndian, c.ackNumber)
+	binary.Write(buf, binary.BigEndian, c.fileIndex)
+	binary.Write(buf, binary.BigEndian, c.status)
+	binary.Write(buf, binary.BigEndian, c.maxTransmissionRate)
+	binary.Write(buf, binary.BigEndian, sevenByteOffset(c.offset))
+
+	for _, re := range c.resendEntries {
+		binary.Write(buf, binary.BigEndian, re.fileIndex)
+		binary.Write(buf, binary.BigEndian, sevenByteOffset(re.offset))
+		binary.Write(buf, binary.BigEndian, re.length)
 	}
 	bs := buf.Bytes()
 	return bs, nil
 }
-func (a *Acknowledgement) UnmarshalBinary(data []byte) error {
-	a.fileIndex = binary.BigEndian.Uint16(data[0:2])
-	a.receivedUpTo = binary.BigEndian.Uint64(data[2:10])
 
-	if len(data) > 10 {
-		a.missing = make([]uint64, len(data[10:])/8)
-		buf := bytes.NewBuffer(data[10:])
-		err := binary.Read(buf, binary.BigEndian, a.missing)
-		if err != nil {
-			return err
+func (c *ClientAck) UnmarshalBinary(data []byte) error {
+	c.ackNumber = uint8(data[0])
+	c.fileIndex = binary.BigEndian.Uint16(data[1:3])
+	c.status = uint8(data[3])
+	c.maxTransmissionRate = binary.BigEndian.Uint32(data[4:8])
+	c.offset = uintOffset(data[8:15])
+
+	if len(data) > 15 {
+		reBytes := data[15:]
+		for i := 0; i < len(reBytes)/10; i++ {
+			re := ResendEntry{}
+			re.fileIndex = binary.BigEndian.Uint16(reBytes[:2])
+			re.offset = uintOffset(reBytes[2:9])
+			re.length = uint8(reBytes[9])
+			c.resendEntries = append(c.resendEntries, re)
+			reBytes = reBytes[10:]
 		}
+
 	}
 	return nil
 }
 
-type Cancel struct {
-	fileIndex uint16
+type CloseConnection struct {
+	reason uint16
 }
 
-func (c Cancel) MarshalBinary() ([]byte, error) {
+func (c CloseConnection) MarshalBinary() ([]byte, error) {
 	buf := new(bytes.Buffer)
-	binary.Write(buf, binary.BigEndian, c.fileIndex)
+	binary.Write(buf, binary.BigEndian, c.reason)
 	return buf.Bytes(), nil
 }
 
-func (c *Cancel) UnmarshalBinary(data []byte) error {
-	c.fileIndex = binary.BigEndian.Uint16(data[:2])
+func (c *CloseConnection) UnmarshalBinary(data []byte) error {
+	c.reason = binary.BigEndian.Uint16(data[:2])
 	return nil
 }

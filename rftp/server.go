@@ -56,7 +56,7 @@ func (s *Server) Listen(host string) error {
 func (s *Server) handlePacket(conn *net.UDPConn, addr *net.UDPAddr, length int, packet []byte) {
 	header := &MsgHeader{}
 	if err := header.UnmarshalBinary(packet); err != nil {
-	    // TODO: Drop connection
+		// TODO: Drop connection
 	}
 
 	switch header.msgType {
@@ -69,7 +69,7 @@ func (s *Server) handlePacket(conn *net.UDPConn, addr *net.UDPAddr, length int, 
 		s.accept(addr, cr)
 
 	case msgClientAck:
-		ack := &Acknowledgement{}
+		ack := &ClientAck{}
 		ack.UnmarshalBinary(packet[header.hdrLen:])
 		s.connMgr.handle(addr, ack)
 
@@ -96,7 +96,7 @@ func (s *Server) accept(addr *net.UDPAddr, cr *ClientRequest) {
 	rss := []io.ReadSeeker{}
 	for _, rf := range cr.files {
 		for _, f := range fs {
-			if rf.path == f.Name() {
+			if rf.fileName == f.Name() {
 				rs, err := os.Open(f.Name())
 				if err != nil {
 					// TODO send err status meta
@@ -113,7 +113,7 @@ func (s *Server) accept(addr *net.UDPAddr, cr *ClientRequest) {
 }
 
 type connection struct {
-	ch   chan *Acknowledgement
+	ch   chan *ClientAck
 	sock io.Writer
 }
 
@@ -137,30 +137,31 @@ func (c *connManager) add(conn *net.UDPConn, addr *net.UDPAddr, cr *ClientReques
 	// or send err if not found
 
 	ik := key(addr)
-	ackChan := make(chan *Acknowledgement)
+	ackChan := make(chan *ClientAck)
+	newConn := &connection{
+		ch: ackChan,
+		sock: responseWriter(func(bs []byte) (int, error) {
+			return conn.WriteTo(bs, addr)
+		}),
+	}
 
 	c.mux.Lock()
 	if _, ok := c.conns[ik]; ok {
 		// TODO: Conn already exists, do nothing, maybe send error to client?
 		return
 	}
-	c.conns[ik] = &connection{
-		ch: ackChan,
-		sock: responseWriter(func(bs []byte) (int, error) {
-			return conn.WriteTo(bs, addr)
-		}),
-	}
+	c.conns[ik] = newConn
 	c.mux.Unlock()
 
-	sendData(ackChan, cr, rss)
+	newConn.sendData(ackChan, cr, rss)
 }
 
-func sendData(ackChan <-chan *Acknowledgement, cr *ClientRequest, _ []io.ReadSeeker) {
+func (c *connection) sendData(ackChan <-chan *ClientAck, cr *ClientRequest, _ []io.ReadSeeker) {
 	// TODO: send data and handle ACKs
 	// this may be a good place for heavy things like congestion control
 }
 
-func (c *connManager) handle(addr *net.UDPAddr, ack *Acknowledgement) {
+func (c *connManager) handle(addr *net.UDPAddr, ack *ClientAck) {
 	ik := key(addr)
 
 	c.mux.Lock()

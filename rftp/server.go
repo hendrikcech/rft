@@ -55,7 +55,9 @@ func (s *Server) Listen(host string) error {
 
 func (s *Server) handlePacket(conn *net.UDPConn, addr *net.UDPAddr, length int, packet []byte) {
 	header := &MsgHeader{}
-	header.UnmarshalBinary(packet)
+	if err := header.UnmarshalBinary(packet); err != nil {
+	    // TODO: Drop connection
+	}
 
 	switch header.msgType {
 	case msgClientRequest:

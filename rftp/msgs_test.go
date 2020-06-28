@@ -50,11 +50,23 @@ func TestMsgHeaderMarshalling(t *testing.T) {
 
 func TestClientRequestMarshalling(t *testing.T) {
 	tests := map[string]ClientRequest{
-		"empty":      {},
-		"one file":   {[]FileRequest{{5, "path1"}}},
-		"two files":  {[]FileRequest{{5, "path1"}, {10, "path2"}}},
-		"whitespace": {[]FileRequest{{5, "path 1"}, {10, "path2"}}},
-		"new line":   {[]FileRequest{{5, "path\n1"}, {10, "path \n2"}}},
+		"empty": {},
+		"one file": {
+			maxTransmissionRate: 0,
+			files:               []FileDescriptor{{5, "path1"}},
+		},
+		"two files": {
+			maxTransmissionRate: 0,
+			files:               []FileDescriptor{{5, "path1"}, {10, "path2"}},
+		},
+		"whitespace": {
+			maxTransmissionRate: 0,
+			files:               []FileDescriptor{{5, "path 1"}, {10, "path2"}},
+		},
+		"new line": {
+			maxTransmissionRate: 0,
+			files:               []FileDescriptor{{5, "path\n1"}, {10, "path \n2"}},
+		},
 	}
 
 	for name, tc := range tests {
@@ -68,7 +80,7 @@ func TestFileRequestMarshalling(t *testing.T) {
 	cs := []byte("a948904f2f0f479b8f8197694b30184b0d2ed1c1cd2a1ec0fb85d299a192a447")
 	var csa [64]byte
 	copy(csa[:], cs[:64])
-	tests := map[string]FileResponse{
+	tests := map[string]ServerMetaData{
 		"empty":             {},
 		"zero":              {0, 0, 0, [64]byte{}},
 		"non-zero-uints":    {1, 2, 3, [64]byte{}},
@@ -76,36 +88,36 @@ func TestFileRequestMarshalling(t *testing.T) {
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			testConversion(t, &tc, &FileResponse{})
+			testConversion(t, &tc, &ServerMetaData{})
 		})
 	}
 }
 
 func TestDataMarshalling(t *testing.T) {
-	tests := map[string]Data{
+	tests := map[string]ServerPayload{
 		"empty": {},
 		"zero": {
 			fileIndex: 0,
 			offset:    0,
 		},
-		"non-zero": {0, 0, []byte("some data")},
+		"non-zero": {0, 0, 0, []byte("some data")},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			r := &Data{}
+			r := &ServerPayload{}
 			testConversion(t, &tc, r)
 		})
 	}
 }
 
 func TestAcknowledgementMarshalling(t *testing.T) {
-	tests := map[string]Acknowledgement{
-		"no-missing": {0, 0, nil},
-		"missing":    {0, 0, []uint64{0, 1, 2}},
+	tests := map[string]ClientAck{
+		"no-missing": {0, 0, 0, 0, 0, nil},
+		"missing":    {0, 0, 0, 0, 0, []ResendEntry{{0, 1, 2}}},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			r := &Acknowledgement{}
+			r := &ClientAck{}
 			testConversion(t, &tc, r)
 		})
 	}

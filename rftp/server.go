@@ -1,6 +1,7 @@
 package rftp
 
 import (
+	"fmt"
 	"io"
 	"io/ioutil"
 	"net"
@@ -17,14 +18,11 @@ type Server struct {
 	connMgr *connManager
 }
 
-type ipKey [16]byte
-type port int
-
 func NewServer(l Lister) *Server {
 	return &Server{
 		SRC: l,
 		connMgr: &connManager{
-			conns: make(map[ipKey]map[port]*connection),
+			conns: make(map[string]*connection),
 		},
 	}
 }
@@ -88,12 +86,11 @@ type connection struct {
 
 type connManager struct {
 	mux   sync.Mutex
-	conns map[ipKey]map[port]*connection
+	conns map[string]*connection
 }
 
-func key(ip net.IP) (ik ipKey) {
-	copy(ik[:], ip.To16())
-	return
+func key(ip *net.UDPAddr) string {
+	return fmt.Sprintf("%v:%v", ip.IP, ip.Port)
 }
 
 type responseWriter func([]byte) (int, error)
@@ -106,20 +103,15 @@ func (c *connManager) accept(conn *net.UDPConn, addr *net.UDPAddr, cr *ClientReq
 	// TODO: find requested file and wrap into io.Reader
 	// or send err if not found
 
-	ik := key(addr.IP)
-	pk := port(addr.Port)
+	ik := key(addr)
 	ackChan := make(chan *Acknowledgement)
 
 	c.mux.Lock()
-	ipConn, ok := c.conns[ik]
-	if !ok {
-		c.conns[ik] = make(map[port]*connection)
-	}
-	if _, ok := ipConn[pk]; ok {
+	if _, ok := c.conns[ik]; ok {
 		// TODO: Conn already exists, do nothing, maybe send error to client?
 		return
 	}
-	ipConn[pk] = &connection{
+	c.conns[ik] = &connection{
 		ch: ackChan,
 		sock: responseWriter(func(bs []byte) (int, error) {
 			return conn.WriteTo(bs, addr)
@@ -136,15 +128,10 @@ func sendData(ackChan <-chan *Acknowledgement, cr *ClientRequest, _ []io.ReadSee
 }
 
 func (c *connManager) handle(addr *net.UDPAddr, ack *Acknowledgement) {
-	ik := key(addr.IP)
-	pk := port(addr.Port)
+	ik := key(addr)
 
 	c.mux.Lock()
-	ipConn, ok := c.conns[ik]
-	if !ok {
-		// TODO send error conn not found
-	}
-	conn, ok := ipConn[pk]
+	conn, ok := c.conns[ik]
 	if !ok {
 		// TODO send error conn not found
 	}
@@ -154,15 +141,11 @@ func (c *connManager) handle(addr *net.UDPAddr, ack *Acknowledgement) {
 }
 
 func (c *connManager) close(addr *net.UDPAddr) {
-	ik := key(addr.IP)
-	pk := port(addr.Port)
+	ik := key(addr)
 
 	c.mux.Lock()
-	conn := c.conns[ik][pk]
-	delete(c.conns[ik], pk)
-	if len(c.conns[ik]) == 0 {
-		delete(c.conns, ik)
-	}
+	conn := c.conns[ik]
+	delete(c.conns, ik)
 	c.mux.Unlock()
 
 	close(conn.ch)

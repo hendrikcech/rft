@@ -15,6 +15,7 @@ type Lister interface {
 
 type Server struct {
 	SRC     Lister
+	sock    *net.UDPConn
 	connMgr *connManager
 }
 
@@ -37,6 +38,7 @@ func (s *Server) Listen(host string) error {
 	if err != nil {
 		return err
 	}
+	s.sock = conn
 
 	defer conn.Close()
 
@@ -64,7 +66,7 @@ func (s *Server) handlePacket(conn *net.UDPConn, addr *net.UDPAddr, length int, 
 		if err != nil {
 			// TODO: Drop connection
 		}
-		s.connMgr.accept(conn, addr, cr, s.SRC)
+		s.accept(addr, cr)
 
 	case msgClientAck:
 		ack := &Acknowledgement{}
@@ -77,6 +79,37 @@ func (s *Server) handlePacket(conn *net.UDPConn, addr *net.UDPAddr, length int, 
 	default:
 		// TODO: Drop connection
 	}
+}
+
+// TODO accept could likely be a lot smarter.  Some caching might be a good
+// idea.  A bit more complex but maybe useful addition would be to have the user
+// specify a handler for any given ClientRequest. Therefore we could replace the
+// Lister by a map of handlers, which match a certain ClientRequest
+// The handler would likely need a writer to write a response to, but it is
+// important that the underlying type implements an io.ReadSeeker, which is
+// needed for retransmission (see sendData or flow and congestion control spec)
+func (s *Server) accept(addr *net.UDPAddr, cr *ClientRequest) {
+	fs, err := s.SRC.List()
+	if err != nil {
+		// TODO: reject all
+	}
+	rss := []io.ReadSeeker{}
+	for _, rf := range cr.files {
+		for _, f := range fs {
+			if rf.path == f.Name() {
+				rs, err := os.Open(f.Name())
+				if err != nil {
+					// TODO send err status meta
+					// append nil, to keep correct indices
+					rss = append(rss, nil)
+					continue
+				}
+				rss = append(rss, rs)
+			}
+		}
+	}
+
+	s.connMgr.add(s.sock, addr, cr, rss)
 }
 
 type connection struct {
@@ -99,7 +132,7 @@ func (rw responseWriter) Write(bs []byte) (int, error) {
 	return rw(bs)
 }
 
-func (c *connManager) accept(conn *net.UDPConn, addr *net.UDPAddr, cr *ClientRequest, _ Lister) {
+func (c *connManager) add(conn *net.UDPConn, addr *net.UDPAddr, cr *ClientRequest, rss []io.ReadSeeker) {
 	// TODO: find requested file and wrap into io.Reader
 	// or send err if not found
 
@@ -119,7 +152,7 @@ func (c *connManager) accept(conn *net.UDPConn, addr *net.UDPAddr, cr *ClientReq
 	}
 	c.mux.Unlock()
 
-	sendData(ackChan, cr, nil)
+	sendData(ackChan, cr, rss)
 }
 
 func sendData(ackChan <-chan *Acknowledgement, cr *ClientRequest, _ []io.ReadSeeker) {

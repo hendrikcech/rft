@@ -1,9 +1,11 @@
+// Package cmd implements command line handling
 package cmd
 
 import (
 	"fmt"
 	"os"
 
+	"github.com/hendrikcech/rft/rftp"
 	"github.com/spf13/cobra"
 )
 
@@ -16,22 +18,21 @@ var (
 var rootCmd = &cobra.Command{
 	Use:   "rft <host> <file>",
 	Short: "A sample client and server using rft",
+	Args:  cobra.MinimumNArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
+		host := args[0]
+		files := args[1:]
+
 		if s {
-			fmt.Println("running server")
-			printFlags()
+			fmt.Printf("running server on host '%v' and dir %v\n", host, files[0])
+			server := rftp.NewServer(rftp.DirectoryLister(files[0]))
+			server.Listen(fmt.Sprintf(":%v", t))
 			return
 		}
-		fmt.Println("running client")
-		printFlags()
-	},
-}
 
-func printFlags() {
-	fmt.Printf("t=%v\n", t)
-	fmt.Printf("s=%v\n", s)
-	fmt.Printf("p=%v\n", p)
-	fmt.Printf("q=%v\n", q)
+		fmt.Printf("running client request to host '%v' for files %v\n", host, files)
+		rftp.Request(host, files)
+	},
 }
 
 func init() {
@@ -40,7 +41,7 @@ Operate in client mode if “–s” is not specified`)
 	rootCmd.PersistentFlags().IntVarP(&t, "port", "t", 0, "specify the port number to use")
 	rootCmd.PersistentFlags().Float32VarP(&p, "p", "p", 0, `specify the  loss probabilities for the Markov chain model
 if only one is specified, assume p=q; if neither is specified assume no loss`)
-	rootCmd.PersistentFlags().Float32VarP(&p, "q", "q", 0, `specify the  loss probabilities for the Markov chain model
+	rootCmd.PersistentFlags().Float32VarP(&q, "q", "q", 0, `specify the  loss probabilities for the Markov chain model
 if only one is specified, assume p=q; if neither is specified assume no loss`)
 }
 

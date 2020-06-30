@@ -7,10 +7,10 @@ import (
 )
 
 const (
-	msgClientRequest uint16 = iota
-	msgFileResponse
-	msgData
-	msgAck
+	msgClientRequest uint8 = iota
+	msgServerMetadata
+	msgServerPayload
+	msgClientAck
 	msgClose
 )
 
@@ -38,6 +38,8 @@ type MsgHeader struct {
 	msgType   uint8
 	optionLen uint8
 	options   []option
+
+	hdrLen int
 }
 
 func NewMsgHeader(msgType uint8, os ...option) MsgHeader {
@@ -46,12 +48,18 @@ func NewMsgHeader(msgType uint8, os ...option) MsgHeader {
 		// TODO: Don't panic? Maybe return error
 		panic("too many options")
 	}
+	l := 0
+	for _, o := range os {
+		l += 2 + int(o.length)
+	}
 
 	return MsgHeader{
 		version:   0,
 		msgType:   0,
 		optionLen: uint8(olen),
 		options:   os,
+
+		hdrLen: l + 2,
 	}
 }
 
@@ -79,6 +87,9 @@ func (s *MsgHeader) UnmarshalBinary(data []byte) error {
 	s.version = vt & 0xF0 >> 4
 	s.msgType = vt & 0x0F
 	s.optionLen = uint8(data[1])
+
+	// TODO: Parse options and fix hdrLen
+	s.hdrLen = 2
 
 	return nil
 }

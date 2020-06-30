@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log"
 	"math"
 )
 
@@ -137,18 +138,22 @@ func (s *ClientRequest) UnmarshalBinary(data []byte) error {
 		return nil
 	}
 
+	log.Printf("extract %v file(s)\n", numFiles)
 	s.files = make([]FileDescriptor, numFiles)
 
 	dataLens := data[6:]
 	for i := uint16(0); i < numFiles; i++ {
 		f := FileDescriptor{}
 		f.offset = uintOffset(dataLens[:7])
+		log.Printf("offset: %v\n", f.offset)
 		pathLen := binary.BigEndian.Uint16(dataLens[7:9])
+		log.Printf("path len: %v\n", pathLen)
 		f.fileName = string(dataLens[9 : 9+pathLen])
 		dataLens = dataLens[9+pathLen:]
 		s.files[i] = f
 	}
 
+	log.Printf("parsed CR: %v\n", s)
 	return nil
 }
 

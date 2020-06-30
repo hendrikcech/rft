@@ -5,5 +5,7 @@ import (
 )
 
 func main() {
+	// uncomment to disable logging
+	//log.SetOutput(ioutil.Discard)
 	cmd.Execute()
 }

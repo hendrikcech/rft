@@ -3,6 +3,8 @@ package cmd
 
 import (
 	"fmt"
+	"io"
+	"log"
 	"os"
 
 	"github.com/hendrikcech/rft/rftp"
@@ -30,8 +32,17 @@ var rootCmd = &cobra.Command{
 			return
 		}
 
-		fmt.Printf("running client request to host '%v' for files %v\n", host, files)
-		rftp.Request(host, files)
+		hs := fmt.Sprintf("%v:%v", host, t)
+		fmt.Printf("running client request to host '%v' for files %v\n", hs, files)
+		rs, err := rftp.Request(hs, files)
+		if err != nil {
+			log.Printf("error on request: %v", err)
+		}
+
+		for _, r := range rs {
+			io.Copy(os.Stdout, &r)
+		}
+
 	},
 }
 

@@ -157,8 +157,22 @@ func (s *ClientRequest) UnmarshalBinary(data []byte) error {
 	return nil
 }
 
+type MetaDataStatus uint8
+
+func (m MetaDataStatus) String() string {
+	switch uint8(m) {
+	case 1:
+		return "1: file does not exist"
+	case 2:
+		return "2: file is empty"
+	case 3:
+		return "3: access denied"
+	}
+	return "0: no error"
+}
+
 type ServerMetaData struct {
-	status    uint8
+	status    MetaDataStatus
 	fileIndex uint16
 	size      uint64
 	checkSum  [16]byte
@@ -178,7 +192,7 @@ func (s ServerMetaData) MarshalBinary() ([]byte, error) {
 }
 
 func (s *ServerMetaData) UnmarshalBinary(data []byte) error {
-	s.status = uint8(data[1])
+	s.status = MetaDataStatus(data[1])
 	s.fileIndex = binary.BigEndian.Uint16(data[2:4])
 	s.size = binary.BigEndian.Uint64(data[4:12])
 

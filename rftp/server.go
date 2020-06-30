@@ -28,7 +28,7 @@ func NewServer(l Lister) *Server {
 	return &Server{
 		SRC: l,
 		connMgr: &connManager{
-			conns: make(map[string]*connection),
+			conns: make(map[string]*connectionThing),
 		},
 	}
 }
@@ -157,14 +157,14 @@ func (s *Server) accept(addr *net.UDPAddr, cr *ClientRequest) {
 	s.connMgr.add(s.sock, addr, cr, rss)
 }
 
-type connection struct {
+type connectionThing struct {
 	ch   chan *ClientAck
 	sock io.Writer
 }
 
 type connManager struct {
 	mux   sync.Mutex
-	conns map[string]*connection
+	conns map[string]*connectionThing
 }
 
 func key(ip *net.UDPAddr) string {
@@ -183,7 +183,7 @@ func (c *connManager) add(conn *net.UDPConn, addr *net.UDPAddr, cr *ClientReques
 
 	ik := key(addr)
 	ackChan := make(chan *ClientAck)
-	newConn := &connection{
+	newConn := &connectionThing{
 		ch: ackChan,
 		sock: responseWriter(func(bs []byte) (int, error) {
 			//			log.Printf("sending bytes to %v: %v\n", addr, bs)
@@ -208,7 +208,7 @@ type response struct {
 	size   uint64
 }
 
-func (c *connection) buildAndSend(bm encoding.BinaryMarshaler, lastAck uint8) {
+func (c *connectionThing) buildAndSend(bm encoding.BinaryMarshaler, lastAck uint8) {
 	var msgT uint8
 	switch v := bm.(type) {
 	case ServerMetaData:
@@ -241,7 +241,7 @@ func (c *connection) buildAndSend(bm encoding.BinaryMarshaler, lastAck uint8) {
 	_, err = c.sock.Write(append(hs, bs...))
 }
 
-func (c *connection) sendData(ackChan <-chan *ClientAck, cr *ClientRequest, rss []response) {
+func (c *connectionThing) sendData(ackChan <-chan *ClientAck, cr *ClientRequest, rss []response) {
 	// TODO: send data and handle ACKs
 	// this may be a good place for heavy things like congestion control
 
@@ -306,7 +306,7 @@ func (c *connection) sendData(ackChan <-chan *ClientAck, cr *ClientRequest, rss 
 
 	for i := range cr.files {
 		smd := ServerMetaData{
-			status:    rss[i].status,
+			status:    MetaDataStatus(rss[i].status),
 			fileIndex: uint16(i),
 			size:      rss[i].size,
 		}

@@ -17,12 +17,6 @@ type UnMarshalBinary interface {
 	encoding.BinaryUnmarshaler
 }
 
-func checkErrWithMsg(t *testing.T, err error, msg string) {
-	if err != nil {
-		t.Errorf("%s: %v", msg, err)
-	}
-}
-
 func TestMsgHeaderMarshalling(t *testing.T) {
 	tests := map[string]MsgHeader{
 		"zero": {

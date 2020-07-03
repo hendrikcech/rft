@@ -3,26 +3,39 @@ package rftp
 import (
 	"encoding"
 	"fmt"
+	"io"
 	"log"
 	"net"
 )
 
-type handlerFunc func([]option, []byte)
+type packet struct {
+	os         []option
+	data       []byte
+	remoteAddr *net.UDPAddr
+}
 
-func (h handlerFunc) handle(os []option, bs []byte) {
-	h(os, bs)
+type handlerFunc func(io.Writer, *packet)
+
+func (h handlerFunc) handle(w io.Writer, p *packet) {
+	h(w, p)
 }
 
 type packetHandler interface {
-	handle([]option, []byte)
+	handle(io.Writer, *packet)
 }
 
 type connection struct {
-	conn *net.UDPConn
+	socket *net.UDPConn
 
 	handlers map[uint8]packetHandler
 
 	bufferSize int
+}
+
+type responseWriter func([]byte) (int, error)
+
+func (rw responseWriter) Write(bs []byte) (int, error) {
+	return rw(bs)
 }
 
 func newConnection() *connection {
@@ -36,14 +49,14 @@ func (c *connection) handle(msgType uint8, h packetHandler) {
 	c.handlers[msgType] = h
 }
 
-func (c *connection) receive() {
+func (c *connection) receive() error {
 	for {
 		msg := make([]byte, c.bufferSize)
-		n, _, err := c.conn.ReadFromUDP(msg)
+		n, addr, err := c.socket.ReadFromUDP(msg)
 		if err != nil {
 			// TODO: check error and maybe stop listening and shutdown
 			log.Printf("discarded packet due to error: %v", err)
-			continue
+			break
 		}
 
 		header := &MsgHeader{}
@@ -53,8 +66,37 @@ func (c *connection) receive() {
 			continue
 		}
 
-		go c.handlers[header.msgType].handle(header.options, msg[header.hdrLen:n])
+		rw := responseWriter(func(bs []byte) (int, error) {
+			return c.socket.WriteTo(bs, addr)
+		})
+		p := &packet{
+			os:         header.options,
+			data:       msg[header.hdrLen:n],
+			remoteAddr: addr,
+		}
+		go c.handlers[header.msgType].handle(rw, p)
 	}
+
+	return nil
+}
+
+func (c *connection) listen(host string) (func(), error) {
+	addr, err := net.ResolveUDPAddr("udp4", host)
+	if err != nil {
+		return nil, err
+	}
+
+	log.Printf("address: %v\n", addr)
+
+	conn, err := net.ListenUDP("udp4", addr)
+	if err != nil {
+		return nil, err
+	}
+	c.socket = conn
+
+	return func() {
+		conn.Close()
+	}, nil
 }
 
 func (c *connection) connectTo(host string) error {
@@ -69,11 +111,11 @@ func (c *connection) connectTo(host string) error {
 		return err
 	}
 
-	c.conn = conn
+	c.socket = conn
 	return nil
 }
 
-func (c *connection) send(msg encoding.BinaryMarshaler) error {
+func sendTo(writer io.Writer, msg encoding.BinaryMarshaler) error {
 	header := MsgHeader{
 		version:   0,
 		optionLen: 0,
@@ -103,59 +145,7 @@ func (c *connection) send(msg encoding.BinaryMarshaler) error {
 		return err
 	}
 
-	_, err = c.conn.Write(append(hs, bs...))
+	_, err = writer.Write(append(hs, bs...))
 
 	return err
 }
-
-/*
-func (u *UDPRequester) Request(host string, m encoding.BinaryMarshaler) (encoding.BinaryUnmarshaler, error) {
-
-	hdr := &MsgHeader{
-		version:   0,
-		msgType:   msgClientRequest,
-		optionLen: 0,
-	}
-	hs, err := hdr.MarshalBinary()
-	if err != nil {
-		return nil, err
-	}
-	msg, err := m.MarshalBinary()
-	if err != nil {
-		return nil, err
-	}
-
-	err = u.Dial(host)
-	if err != nil {
-		return nil, err
-	}
-
-	_, err = u.conn.Write(append(hs, msg...))
-	if err != nil {
-		return nil, err
-	}
-
-	// TODO: now receive the file request response packet
-	// and then receive all the data packets and send corresponding acks
-	packet := make([]byte, 2048)
-	for {
-		_, _, err = u.conn.ReadFromUDP(packet)
-		if err != nil {
-			return nil, err
-		}
-
-		hdr := MsgHeader{}
-		err = hdr.UnmarshalBinary(packet)
-		if err != nil {
-			return nil, err
-		}
-		smd := ServerMetaData{}
-		err = smd.UnmarshalBinary(packet[hdr.hdrLen:])
-		if err != nil {
-			return nil, err
-		}
-
-		log.Printf("received packet:\nhdr: %v\nval:%v\n", hdr, smd)
-	}
-}
-*/

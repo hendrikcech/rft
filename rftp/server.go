@@ -20,77 +20,62 @@ type Lister interface {
 
 type Server struct {
 	SRC     Lister
-	sock    *net.UDPConn
 	connMgr *connManager
+	socket  *connection
 }
 
 func NewServer(l Lister) *Server {
-	return &Server{
+	s := &Server{
 		SRC: l,
 		connMgr: &connManager{
-			conns: make(map[string]*connectionThing),
+			conns: make(map[string]*clientConnection),
 		},
 	}
+	c := newConnection()
+
+	c.handle(msgClientRequest, handlerFunc(s.handleRequest))
+	c.handle(msgClientAck, handlerFunc(s.handleACK))
+	c.handle(msgClose, handlerFunc(s.handleClose))
+
+	s.socket = c
+
+	return s
 }
 
 func (s *Server) Listen(host string) error {
-	addr, err := net.ResolveUDPAddr("udp4", host)
+	cancel, err := s.socket.listen(host)
 	if err != nil {
 		return err
 	}
-
-	log.Printf("address: %v\n", addr)
-
-	conn, err := net.ListenUDP("udp4", addr)
-	if err != nil {
-		return err
-	}
-	s.sock = conn
-
-	defer conn.Close()
-
-	log.Printf("start listening on %v\n", conn.LocalAddr().String())
-
-	for {
-		msg := make([]byte, 1024)
-		n, addr, err := conn.ReadFromUDP(msg)
-		if err != nil {
-			return err
-		}
-		//		log.Printf("received packet of length %v: \n%v\n", n, hex.Dump(msg))
-
-		go s.handlePacket(conn, addr, n, msg)
-	}
+	defer cancel()
+	return s.socket.receive()
 }
 
-func (s *Server) handlePacket(conn *net.UDPConn, addr *net.UDPAddr, length int, packet []byte) {
-	header := &MsgHeader{}
-	if err := header.UnmarshalBinary(packet); err != nil {
-		// TODO: Drop connection
-		log.Printf("error while unmarshalling packet header: %v\n", err)
+func (s *Server) handleRequest(w io.Writer, p *packet) {
+	cr := &ClientRequest{}
+	err := cr.UnmarshalBinary(p.data)
+	if err != nil {
+		// TODO: Close connection?
 	}
+	s.accept(w, p.remoteAddr, cr)
+}
 
-	switch header.msgType {
-	case msgClientRequest:
-		cr := &ClientRequest{}
-		err := cr.UnmarshalBinary(packet[header.hdrLen:])
-		if err != nil {
-			// TODO: Drop connection
-			log.Printf("error while unmarshalling client request: %v\n", err)
-		}
-		s.accept(addr, cr)
-
-	case msgClientAck:
-		ack := &ClientAck{}
-		ack.UnmarshalBinary(packet[header.hdrLen:])
-		s.connMgr.handle(addr, ack)
-
-	case msgClose:
-		s.connMgr.close(addr)
-
-	default:
-		// TODO: Drop connection
+func (s *Server) handleACK(_ io.Writer, p *packet) {
+	ack := &ClientAck{}
+	err := ack.UnmarshalBinary(p.data)
+	if err != nil {
+		// TODO: Close connection?
 	}
+	s.connMgr.handle(p.remoteAddr, ack)
+}
+
+func (s *Server) handleClose(_ io.Writer, p *packet) {
+	cl := CloseConnection{}
+	err := cl.UnmarshalBinary(p.data)
+	if err != nil {
+		// TODO What now?
+	}
+	s.connMgr.close(p.remoteAddr)
 }
 
 func findFileIn(name string, files []os.FileInfo) os.FileInfo {
@@ -109,7 +94,7 @@ func findFileIn(name string, files []os.FileInfo) os.FileInfo {
 // The handler would likely need a writer to write a response to, but it is
 // important that the underlying type implements an io.ReadSeeker, which is
 // needed for retransmission (see sendData or flow and congestion control spec)
-func (s *Server) accept(addr *net.UDPAddr, cr *ClientRequest) {
+func (s *Server) accept(w io.Writer, addr *net.UDPAddr, cr *ClientRequest) {
 	fs, err := s.SRC.List()
 	if err != nil {
 		// TODO: reject all
@@ -154,41 +139,32 @@ func (s *Server) accept(addr *net.UDPAddr, cr *ClientRequest) {
 	}
 
 	log.Println("adding connection")
-	s.connMgr.add(s.sock, addr, cr, rss)
+	s.connMgr.add(w, addr, cr, rss)
 }
 
-type connectionThing struct {
-	ch   chan *ClientAck
-	sock io.Writer
+type clientConnection struct {
+	ch     chan *ClientAck
+	socket io.Writer
 }
 
 type connManager struct {
 	mux   sync.Mutex
-	conns map[string]*connectionThing
+	conns map[string]*clientConnection
 }
 
 func key(ip *net.UDPAddr) string {
 	return fmt.Sprintf("%v:%v", ip.IP, ip.Port)
 }
 
-type responseWriter func([]byte) (int, error)
-
-func (rw responseWriter) Write(bs []byte) (int, error) {
-	return rw(bs)
-}
-
-func (c *connManager) add(conn *net.UDPConn, addr *net.UDPAddr, cr *ClientRequest, rss []response) {
+func (c *connManager) add(w io.Writer, addr *net.UDPAddr, cr *ClientRequest, rss []response) {
 	// TODO: find requested file and wrap into io.Reader
 	// or send err if not found
 
 	ik := key(addr)
 	ackChan := make(chan *ClientAck)
-	newConn := &connectionThing{
-		ch: ackChan,
-		sock: responseWriter(func(bs []byte) (int, error) {
-			//			log.Printf("sending bytes to %v: %v\n", addr, bs)
-			return conn.WriteToUDP(bs, addr)
-		}),
+	newConn := &clientConnection{
+		ch:     ackChan,
+		socket: w,
 	}
 
 	c.mux.Lock()
@@ -208,40 +184,7 @@ type response struct {
 	size   uint64
 }
 
-func (c *connectionThing) buildAndSend(bm encoding.BinaryMarshaler, lastAck uint8) {
-	var msgT uint8
-	switch v := bm.(type) {
-	case ServerMetaData:
-		msgT = msgServerMetadata
-	case ServerPayload:
-		msgT = msgServerPayload
-		v.ackNumber = lastAck
-	default:
-		// TODO: should never happen
-	}
-
-	header := MsgHeader{
-		version:   0,
-		msgType:   msgT,
-		optionLen: 0,
-	}
-
-	hs, err := header.MarshalBinary()
-	if err != nil {
-		// TODO: no idea what now...
-		// cancel and close connection?
-	}
-
-	bs, err := bm.MarshalBinary()
-	if err != nil {
-		// TODO: no idea what now...
-		// cancel and close connection?
-	}
-	log.Printf("sending packet: %v:%v\n", header, string(bs))
-	_, err = c.sock.Write(append(hs, bs...))
-}
-
-func (c *connectionThing) sendData(ackChan <-chan *ClientAck, cr *ClientRequest, rss []response) {
+func (c *clientConnection) sendData(ackChan <-chan *ClientAck, cr *ClientRequest, rss []response) {
 	// TODO: send data and handle ACKs
 	// this may be a good place for heavy things like congestion control
 
@@ -284,7 +227,17 @@ func (c *connectionThing) sendData(ackChan <-chan *ClientAck, cr *ClientRequest,
 					return
 				}
 
-				c.buildAndSend(bm, lastAck)
+				p, ok := bm.(ServerPayload)
+				var err error
+				if ok {
+					p.ackNumber = lastAck
+					err = sendTo(c.socket, p)
+				} else {
+					err = sendTo(c.socket, bm)
+				}
+				if err != nil {
+					// TODO: What now? retry vs. close?
+				}
 				counter++
 
 			case ack := <-ackChan:

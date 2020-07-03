@@ -17,11 +17,6 @@ const (
 	msgClose
 )
 
-// Expects that the first 2 byte of b are already reserved for b's size
-func prependSize(b []byte) {
-	binary.BigEndian.PutUint16(b[:2], uint16(len(b)))
-}
-
 type option struct {
 	otype  uint8
 	length uint8
@@ -69,8 +64,14 @@ func NewMsgHeader(msgType uint8, os ...option) MsgHeader {
 func (s MsgHeader) MarshalBinary() ([]byte, error) {
 	buf := new(bytes.Buffer)
 	vt := s.version<<4 ^ s.msgType
-	binary.Write(buf, binary.BigEndian, vt)
-	binary.Write(buf, binary.BigEndian, s.optionLen)
+	err := binary.Write(buf, binary.BigEndian, vt)
+	if err != nil {
+		return nil, err
+	}
+	err = binary.Write(buf, binary.BigEndian, s.optionLen)
+	if err != nil {
+		return nil, err
+	}
 	for _, o := range s.options {
 		ob, err := o.MarshalBinary()
 		if err != nil {
@@ -112,19 +113,38 @@ var maxFileOffset = uint64(math.Pow(2, 56)) - 1
 func (s ClientRequest) MarshalBinary() ([]byte, error) {
 	buf := new(bytes.Buffer)
 
-	binary.Write(buf, binary.BigEndian, s.maxTransmissionRate)
-	binary.Write(buf, binary.BigEndian, uint16(len(s.files)))
+	err := binary.Write(buf, binary.BigEndian, s.maxTransmissionRate)
+	if err != nil {
+		return nil, err
+	}
+	err = binary.Write(buf, binary.BigEndian, uint16(len(s.files)))
+	if err != nil {
+		return nil, err
+	}
 
 	for _, file := range s.files {
 		if file.offset > maxFileOffset {
 			return nil, errors.New("file offset to big")
 		}
 
-		binary.Write(buf, binary.BigEndian, sevenByteOffset(file.offset))
+		sb, err := sevenByteOffset(file.offset)
+		if err != nil {
+			return nil, err
+		}
+		err = binary.Write(buf, binary.BigEndian, sb)
+		if err != nil {
+			return nil, err
+		}
 
 		pathBin := []byte(file.fileName)
-		binary.Write(buf, binary.BigEndian, uint16(len(pathBin)))
-		buf.Write(pathBin)
+		err = binary.Write(buf, binary.BigEndian, uint16(len(pathBin)))
+		if err != nil {
+			return nil, err
+		}
+		_, err = buf.Write(pathBin)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return buf.Bytes(), nil
@@ -180,11 +200,23 @@ type ServerMetaData struct {
 
 func (s ServerMetaData) MarshalBinary() ([]byte, error) {
 	buf := new(bytes.Buffer)
-	binary.Write(buf, binary.BigEndian, byte(0))
-	binary.Write(buf, binary.BigEndian, s.status)
-	binary.Write(buf, binary.BigEndian, s.fileIndex)
-	binary.Write(buf, binary.BigEndian, s.size)
-	_, err := buf.Write(s.checkSum[:])
+	err := binary.Write(buf, binary.BigEndian, byte(0))
+	if err != nil {
+		return nil, err
+	}
+	err = binary.Write(buf, binary.BigEndian, s.status)
+	if err != nil {
+		return nil, err
+	}
+	err = binary.Write(buf, binary.BigEndian, s.fileIndex)
+	if err != nil {
+		return nil, err
+	}
+	err = binary.Write(buf, binary.BigEndian, s.size)
+	if err != nil {
+		return nil, err
+	}
+	_, err = buf.Write(s.checkSum[:])
 	if err != nil {
 		return nil, err
 	}
@@ -213,11 +245,24 @@ type ServerPayload struct {
 
 func (s ServerPayload) MarshalBinary() ([]byte, error) {
 	buf := new(bytes.Buffer)
-	binary.Write(buf, binary.BigEndian, s.fileIndex)
-	binary.Write(buf, binary.BigEndian, s.ackNumber)
-	binary.Write(buf, binary.BigEndian, sevenByteOffset(s.offset))
+	err := binary.Write(buf, binary.BigEndian, s.fileIndex)
+	if err != nil {
+		return nil, err
+	}
+	err = binary.Write(buf, binary.BigEndian, s.ackNumber)
+	if err != nil {
+		return nil, err
+	}
+	sb, err := sevenByteOffset(s.offset)
+	if err != nil {
+		return nil, err
+	}
+	err = binary.Write(buf, binary.BigEndian, sb)
+	if err != nil {
+		return nil, err
+	}
 
-	_, err := buf.Write(s.data)
+	_, err = buf.Write(s.data)
 	bs := buf.Bytes()
 	return bs, err
 }
@@ -250,10 +295,13 @@ type ClientAck struct {
 }
 
 // make offset BigEndian and cut off the first (most significant) byte
-func sevenByteOffset(offset uint64) []byte {
+func sevenByteOffset(offset uint64) ([]byte, error) {
 	offsetBuffer := new(bytes.Buffer)
-	binary.Write(offsetBuffer, binary.BigEndian, offset)
-	return offsetBuffer.Bytes()[1:]
+	err := binary.Write(offsetBuffer, binary.BigEndian, offset)
+	if err != nil {
+		return nil, err
+	}
+	return offsetBuffer.Bytes()[1:], nil
 }
 
 // pad 7 byte with another zero byte to make reading easy
@@ -264,16 +312,50 @@ func uintOffset(seven []byte) uint64 {
 
 func (c ClientAck) MarshalBinary() ([]byte, error) {
 	buf := new(bytes.Buffer)
-	binary.Write(buf, binary.BigEndian, c.ackNumber)
-	binary.Write(buf, binary.BigEndian, c.fileIndex)
-	binary.Write(buf, binary.BigEndian, c.status)
-	binary.Write(buf, binary.BigEndian, c.maxTransmissionRate)
-	binary.Write(buf, binary.BigEndian, sevenByteOffset(c.offset))
+	err := binary.Write(buf, binary.BigEndian, c.ackNumber)
+	if err != nil {
+		return nil, err
+	}
+	err = binary.Write(buf, binary.BigEndian, c.fileIndex)
+	if err != nil {
+		return nil, err
+	}
+	err = binary.Write(buf, binary.BigEndian, c.status)
+	if err != nil {
+		return nil, err
+	}
+	err = binary.Write(buf, binary.BigEndian, c.maxTransmissionRate)
+	if err != nil {
+		return nil, err
+	}
+
+	sb, err := sevenByteOffset(c.offset)
+	if err != nil {
+		return nil, err
+	}
+
+	err = binary.Write(buf, binary.BigEndian, sb)
+	if err != nil {
+		return nil, err
+	}
 
 	for _, re := range c.resendEntries {
-		binary.Write(buf, binary.BigEndian, re.fileIndex)
-		binary.Write(buf, binary.BigEndian, sevenByteOffset(re.offset))
-		binary.Write(buf, binary.BigEndian, re.length)
+		err = binary.Write(buf, binary.BigEndian, re.fileIndex)
+		if err != nil {
+			return nil, err
+		}
+		sb, err = sevenByteOffset(c.offset)
+		if err != nil {
+			return nil, err
+		}
+		err = binary.Write(buf, binary.BigEndian, sb)
+		if err != nil {
+			return nil, err
+		}
+		err = binary.Write(buf, binary.BigEndian, re.length)
+		if err != nil {
+			return nil, err
+		}
 	}
 	bs := buf.Bytes()
 	return bs, nil
@@ -307,7 +389,10 @@ type CloseConnection struct {
 
 func (c CloseConnection) MarshalBinary() ([]byte, error) {
 	buf := new(bytes.Buffer)
-	binary.Write(buf, binary.BigEndian, c.reason)
+	err := binary.Write(buf, binary.BigEndian, c.reason)
+	if err != nil {
+		return nil, err
+	}
 	return buf.Bytes(), nil
 }
 

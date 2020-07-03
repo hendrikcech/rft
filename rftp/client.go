@@ -10,7 +10,7 @@ import (
 
 var defaultClient = Client{}
 
-func Request(host string, files []string) ([]result, error) {
+func Request(host string, files []string) ([]Result, error) {
 	return defaultClient.Request(host, files)
 }
 
@@ -18,7 +18,7 @@ type Requester interface {
 	Request(string, encoding.BinaryMarshaler) (encoding.BinaryUnmarshaler, error)
 }
 
-type result struct {
+type Result struct {
 	buffer     []ServerPayload
 	pipeReader io.Reader
 	pipeWriter io.Writer
@@ -29,22 +29,22 @@ type result struct {
 	err        error
 }
 
-func (r *result) Read(p []byte) (n int, err error) {
+func (r *Result) Read(p []byte) (n int, err error) {
 	return r.pipeReader.Read(p)
 }
 
 type Client struct {
-	results []result
+	results []Result
 	smd     chan *ServerMetaData
 	payload chan *ServerPayload
 }
 
-func (c *Client) Request(host string, files []string) ([]result, error) {
+func (c *Client) Request(host string, files []string) ([]Result, error) {
 	fs := []FileDescriptor{}
 	for i, f := range files {
 		fs = append(fs, FileDescriptor{0, f})
 		r, w := io.Pipe()
-		c.results = append(c.results, result{
+		c.results = append(c.results, Result{
 			buffer:     []ServerPayload{},
 			pipeReader: r,
 			pipeWriter: w,
@@ -62,11 +62,15 @@ func (c *Client) Request(host string, files []string) ([]result, error) {
 	conn.handle(msgServerPayload, handlerFunc(c.handleServerPayload))
 	conn.handle(msgClose, handlerFunc(c.handleClose))
 
-	conn.connectTo(host)
-	conn.send(ClientRequest{
+	if err := conn.connectTo(host); err != nil {
+		return nil, err
+	}
+	if err := sendTo(conn.socket, ClientRequest{
 		maxTransmissionRate: 0,
 		files:               fs,
-	})
+	}); err != nil {
+		return nil, err
+	}
 
 	go c.bufferResults()
 	go conn.receive()
@@ -122,20 +126,31 @@ func (c *Client) bufferResults() {
 	}
 }
 
-func (c *Client) handleMetadata(os []option, bs []byte) {
+func (c *Client) handleMetadata(_ io.Writer, p *packet) {
 	smd := ServerMetaData{}
-	smd.UnmarshalBinary(bs)
+	err := smd.UnmarshalBinary(p.data)
+	if err != nil {
+		// TODO: what now? Rerequest metadata.
+		// Maybe log something or cancel the whole thing?
+	}
 	c.smd <- &smd
 	close(c.smd)
 }
 
-func (c *Client) handleServerPayload(os []option, bs []byte) {
+func (c *Client) handleServerPayload(_ io.Writer, p *packet) {
 	pl := ServerPayload{}
-	pl.UnmarshalBinary(bs)
+	err := pl.UnmarshalBinary(p.data)
+	if err != nil {
+		// TODO: what now? Rerequest payload
+		// Maybe log something or cancel the whole thing?
+	}
 	c.payload <- &pl
 }
 
-func (c *Client) handleClose(os []option, bs []byte) {
+func (c *Client) handleClose(_ io.Writer, p *packet) {
 	cl := CloseConnection{}
-	cl.UnmarshalBinary(bs)
+	err := cl.UnmarshalBinary(p.data)
+	if err != nil {
+		// TODO: what now? Just drop everything?
+	}
 }

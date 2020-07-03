@@ -77,13 +77,13 @@ func TestClientRequestMarshalling(t *testing.T) {
 }
 
 func TestFileRequestMarshalling(t *testing.T) {
-	cs := []byte("a948904f2f0f479b8f8197694b30184b0d2ed1c1cd2a1ec0fb85d299a192a447")
-	var csa [64]byte
-	copy(csa[:], cs[:64])
+	cs := []byte("846e302501dfdab67f93c10f831d7eee")
+	var csa [16]byte
+	copy(csa[:], cs[:16])
 	tests := map[string]ServerMetaData{
 		"empty":             {},
-		"zero":              {0, 0, 0, [64]byte{}},
-		"non-zero-uints":    {1, 2, 3, [64]byte{}},
+		"zero":              {0, 0, 0, [16]byte{}},
+		"non-zero-uints":    {1, 2, 3, [16]byte{}},
 		"non-zero-checksum": {1, 2, 3, csa},
 	}
 	for name, tc := range tests {

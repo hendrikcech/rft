@@ -161,7 +161,7 @@ type ServerMetaData struct {
 	status    uint8
 	fileIndex uint16
 	size      uint64
-	checkSum  [64]byte
+	checkSum  [16]byte
 }
 
 func (s ServerMetaData) MarshalBinary() ([]byte, error) {
@@ -182,7 +182,7 @@ func (s *ServerMetaData) UnmarshalBinary(data []byte) error {
 	s.fileIndex = binary.BigEndian.Uint16(data[2:4])
 	s.size = binary.BigEndian.Uint64(data[4:12])
 
-	cs := data[12:76]
+	cs := data[12:28]
 
 	for i, c := range cs {
 		s.checkSum[i] = c

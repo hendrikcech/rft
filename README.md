@@ -32,7 +32,7 @@ this File:
 
 ```shell
 go build
-./rft -s -t 9090 &
+./rft -s -t 9090 0.0.0.0 . &
 ./rft localhost -t 9090  README.md
 ```
 

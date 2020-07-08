@@ -27,7 +27,7 @@ var rootCmd = &cobra.Command{
 
 		if s {
 			fmt.Printf("running server on host '%v' and dir %v\n", host, files[0])
-			server := rftp.NewServer(rftp.DirectoryLister(files[0]))
+			server := rftp.NewServer(rftp.DirectoryLister(files[0]), rftp.NewUdpConnection())
 			server.Listen(fmt.Sprintf(":%v", t))
 			return
 		}

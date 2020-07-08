@@ -11,7 +11,7 @@ import (
 var defaultClient = Client{}
 
 func Request(host string, files []string) ([]Result, error) {
-	return defaultClient.Request(host, files)
+	return defaultClient.Request(NewUdpConnection(), host, files)
 }
 
 type Requester interface {
@@ -39,7 +39,7 @@ type Client struct {
 	payload chan *ServerPayload
 }
 
-func (c *Client) Request(host string, files []string) ([]Result, error) {
+func (c *Client) Request(conn connection, host string, files []string) ([]Result, error) {
 	fs := []FileDescriptor{}
 	for i, f := range files {
 		fs = append(fs, FileDescriptor{0, f})
@@ -56,8 +56,6 @@ func (c *Client) Request(host string, files []string) ([]Result, error) {
 	c.smd = make(chan *ServerMetaData, len(fs))
 	c.payload = make(chan *ServerPayload, 1024*len(fs))
 
-	conn := newConnection()
-
 	conn.handle(msgServerMetadata, handlerFunc(c.handleMetadata))
 	conn.handle(msgServerPayload, handlerFunc(c.handleServerPayload))
 	conn.handle(msgClose, handlerFunc(c.handleClose))
@@ -65,7 +63,7 @@ func (c *Client) Request(host string, files []string) ([]Result, error) {
 	if err := conn.connectTo(host); err != nil {
 		return nil, err
 	}
-	if err := sendTo(conn.socket, ClientRequest{
+	if err := conn.send(ClientRequest{
 		maxTransmissionRate: 0,
 		files:               fs,
 	}); err != nil {

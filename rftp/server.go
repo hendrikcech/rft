@@ -21,34 +21,32 @@ type Lister interface {
 type Server struct {
 	SRC     Lister
 	connMgr *connManager
-	socket  *connection
+	conn    connection
 }
 
-func NewServer(l Lister) *Server {
+func NewServer(l Lister, conn connection) *Server {
 	s := &Server{
 		SRC: l,
 		connMgr: &connManager{
 			conns: make(map[string]*clientConnection),
 		},
+		conn: conn,
 	}
-	c := newConnection()
 
-	c.handle(msgClientRequest, handlerFunc(s.handleRequest))
-	c.handle(msgClientAck, handlerFunc(s.handleACK))
-	c.handle(msgClose, handlerFunc(s.handleClose))
-
-	s.socket = c
+	s.conn.handle(msgClientRequest, handlerFunc(s.handleRequest))
+	s.conn.handle(msgClientAck, handlerFunc(s.handleACK))
+	s.conn.handle(msgClose, handlerFunc(s.handleClose))
 
 	return s
 }
 
 func (s *Server) Listen(host string) error {
-	cancel, err := s.socket.listen(host)
+	cancel, err := s.conn.listen(host)
 	if err != nil {
 		return err
 	}
 	defer cancel()
-	return s.socket.receive()
+	return s.conn.receive()
 }
 
 func (s *Server) handleRequest(w io.Writer, p *packet) {
@@ -135,7 +133,6 @@ func (s *Server) accept(w io.Writer, addr *net.UDPAddr, cr *ClientRequest) {
 				status: 0x01,
 			})
 		}
-
 	}
 
 	log.Println("adding connection")

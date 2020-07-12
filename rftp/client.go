@@ -4,8 +4,9 @@ import (
 	"encoding"
 	"fmt"
 	"io"
-	"log"
 	"strings"
+	"sync"
+	"time"
 )
 
 var defaultClient = Client{}
@@ -19,14 +20,23 @@ type Requester interface {
 }
 
 type Result struct {
-	buffer     []ServerPayload
+	lock       *sync.Mutex
+	buffer     []ServerPayload // TODO: Replace by priority queue
 	pipeReader io.Reader
 	pipeWriter io.Writer
 	payload    chan *ServerPayload
-	pointer    uint64
+	pointer    uint64 // Next byte position to write out
+	offset     uint64 // Offset as defined by rft
+	started    bool   // true if received at least 1 chunk for this file
 	size       uint64
 	checksum   [16]byte
 	err        error
+}
+
+// TODO: After replacing buffer by a useful datastructure, calculate the
+// complement of the buffered elements
+func (r Result) getResendEntries() []ResendEntry {
+	return []ResendEntry{}
 }
 
 func (r *Result) Read(p []byte) (n int, err error) {
@@ -34,9 +44,11 @@ func (r *Result) Read(p []byte) (n int, err error) {
 }
 
 type Client struct {
-	results []Result
-	smd     chan *ServerMetaData
-	payload chan *ServerPayload
+	results    []Result
+	resultLock *sync.Mutex
+	smd        chan *ServerMetaData
+	payload    chan *ServerPayload
+	ackNum     chan uint8
 }
 
 func (c *Client) Request(conn connection, host string, files []string) ([]Result, error) {
@@ -72,9 +84,9 @@ func (c *Client) Request(conn connection, host string, files []string) ([]Result
 
 	go c.bufferResults()
 	go conn.receive()
+	go c.sendAcks(conn)
 
 	var errStrings []string
-	// TODO: Decide when to close smdChan
 	for smd := range c.smd {
 		i := smd.fileIndex
 
@@ -96,9 +108,74 @@ func (c *Client) Request(conn connection, host string, files []string) ([]Result
 	return c.results, nil
 }
 
+func (c *Client) sendAcks(conn connection) {
+
+	nextAckNumber := uint8(1) // need to start with 1, to be able to distinguish between server header with no ACK number and our first ACK number
+
+	ackSendMap := map[uint8]time.Time{}
+	rttMap := map[uint8]time.Duration{}
+	rtt := time.Duration(1 * time.Second) // TODO: calculate real rtt or use this as initial timeout?
+
+	timeout := time.NewTimer(rtt)
+	for {
+		select {
+		case an := <-c.ackNum:
+			rttMap[an] = time.Since(ackSendMap[an])
+
+		case <-timeout.C:
+			res, fi, off := c.getAckData()
+
+			ack := ClientAck{
+				ackNumber:           nextAckNumber,
+				maxTransmissionRate: 0,
+				fileIndex:           fi,
+				offset:              off,
+				resendEntries:       res,
+			}
+			conn.send(ack)
+
+			ackSendMap[nextAckNumber] = time.Now()
+			nextAckNumber = (nextAckNumber + 1) % 255
+			rtt = avg(rttMap)
+			timeout = time.NewTimer(rtt / 4)
+		}
+	}
+}
+
+func (c *Client) getAckData() (res []ResendEntry, fi uint16, off uint64) {
+	c.resultLock.Lock()
+	defer c.resultLock.Unlock()
+
+	for i := 0; i <= len(c.results); i++ {
+		c.results[i].lock.Lock()
+		if c.results[i].started {
+			fi = uint16(i)
+			off = c.results[i].offset
+			res = append(res, c.results[i].getResendEntries()...)
+		}
+		c.results[i].lock.Unlock()
+	}
+	return
+}
+
+func avg(ackTimes map[uint8]time.Duration) time.Duration {
+	if len(ackTimes) <= 0 {
+		return time.Duration(0)
+	}
+	avg := 0
+
+	for _, v := range ackTimes {
+		avg += int(v)
+	}
+
+	avgFl := float64(avg) / float64(len(ackTimes))
+
+	return time.Duration(avgFl)
+}
+
 func (c *Client) writerToApp(fi int) {
 	for p := range c.results[fi].payload {
-		_, err := c.results[p.fileIndex].pipeWriter.Write(p.data)
+		_, err := c.results[fi].pipeWriter.Write(p.data)
 		if err != nil {
 			// TODO: notify client?
 		}
@@ -106,13 +183,13 @@ func (c *Client) writerToApp(fi int) {
 }
 
 func (c *Client) bufferResults() {
+	timeout := time.NewTimer(30 * time.Second) //TODO: Adjust timeout duration
+
 	for {
 		select {
 		case p := <-c.payload:
 			i := p.fileIndex
 
-			log.Printf("expecting packet: %v\n", c.results[i].pointer)
-			log.Printf("received payload packet: %v\n", p)
 			if p.offset != c.results[i].pointer {
 				c.results[i].buffer = append(c.results[i].buffer, *p)
 				continue
@@ -120,6 +197,9 @@ func (c *Client) bufferResults() {
 
 			c.results[i].pointer++
 			c.results[i].payload <- p
+			c.ackNum <- p.ackNumber
+		case <-timeout.C:
+			// TODO: Close connection. Maybe retry?
 		}
 	}
 }
@@ -132,6 +212,7 @@ func (c *Client) handleMetadata(_ io.Writer, p *packet) {
 		// Maybe log something or cancel the whole thing?
 	}
 	c.smd <- &smd
+	// TODO: Decide when to actually close smdChan
 	close(c.smd)
 }
 

@@ -4,6 +4,7 @@ import (
 	"encoding"
 	"fmt"
 	"io"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -20,14 +21,15 @@ type Requester interface {
 }
 
 type Result struct {
-	lock       *sync.Mutex
+	lock       sync.Mutex
 	buffer     []ServerPayload // TODO: Replace by priority queue
-	pipeReader io.Reader
-	pipeWriter io.Writer
+	pipeReader *io.PipeReader
+	pipeWriter *io.PipeWriter
 	payload    chan *ServerPayload
 	pointer    uint64 // Next byte position to write out
 	offset     uint64 // Offset as defined by rft
 	started    bool   // true if received at least 1 chunk for this file
+	done       bool   // true if error or all chunks written
 	size       uint64
 	checksum   [16]byte
 	err        error
@@ -44,11 +46,16 @@ func (r *Result) Read(p []byte) (n int, err error) {
 }
 
 type Client struct {
-	results    []Result
-	resultLock *sync.Mutex
-	smd        chan *ServerMetaData
-	payload    chan *ServerPayload
-	ackNum     chan uint8
+	conn    connection
+	results []Result
+	rttLock sync.Mutex
+	rtt     time.Duration
+	smd     chan *ServerMetaData
+	payload chan *ServerPayload
+	ackNum  chan uint8
+
+	timeout         *time.Timer
+	timeoutCanceler chan struct{}
 }
 
 func (c *Client) Request(conn connection, host string, files []string) ([]Result, error) {
@@ -65,9 +72,13 @@ func (c *Client) Request(conn connection, host string, files []string) ([]Result
 		go c.writerToApp(i)
 	}
 
+	c.conn = conn
 	c.smd = make(chan *ServerMetaData, len(fs))
 	c.payload = make(chan *ServerPayload, 1024*len(fs))
 	c.ackNum = make(chan uint8, 256)
+	c.timeoutCanceler = make(chan struct{}, 1)
+	c.rtt = 1 * time.Second // TODO: set better initial timeout value
+	c.timeout = time.NewTimer(6 * c.rtt)
 
 	conn.handle(msgServerMetadata, c.ackNumHandler(handlerFunc(c.handleMetadata)))
 	conn.handle(msgServerPayload, c.ackNumHandler(handlerFunc(c.handleServerPayload)))
@@ -86,22 +97,32 @@ func (c *Client) Request(conn connection, host string, files []string) ([]Result
 	go c.bufferResults()
 	go conn.receive()
 	go c.sendAcks(conn)
+	go c.timeoutConnection()
 
 	var errStrings []string
 	for smd := range c.smd {
 		i := smd.fileIndex
 
+		c.results[i].lock.Lock()
+
 		if smd.status != 0 {
 			err := fmt.Errorf("error receiving file: %v", smd.status)
 			errStrings = append(errStrings, err.Error())
 			c.results[i].err = err
+			c.results[i].done = true
 			close(c.results[i].payload)
 			continue
 		}
 
 		c.results[i].size = smd.size
 		c.results[i].checksum = smd.checkSum
+
+		c.results[i].lock.Unlock()
 	}
+
+	defer func() {
+		go c.closeConnection()
+	}()
 
 	if len(errStrings) > 0 {
 		return c.results, fmt.Errorf(strings.Join(errStrings, ", "))
@@ -112,8 +133,46 @@ func (c *Client) Request(conn connection, host string, files []string) ([]Result
 func (c *Client) ackNumHandler(hf handlerFunc) handlerFunc {
 	return func(w io.Writer, p *packet) {
 		c.ackNum <- p.ackNum
+		c.timeoutCanceler <- struct{}{}
+		rtt := c.getRTT()
+		c.timeout = time.NewTimer(6 * rtt)
+		log.Printf("ack num handler: should timeout in %v\n", 6*rtt)
+		go c.timeoutConnection()
+		log.Println("calling handler func")
 		hf(w, p)
 	}
+}
+
+func (c *Client) timeoutConnection() {
+	log.Println("waiting for timeout...")
+	select {
+	case <-c.timeout.C:
+		log.Println("time out, closing connection")
+		c.closeConnection()
+	case <-c.timeoutCanceler:
+		log.Println("cancel time out")
+		return
+	}
+}
+
+func (c *Client) closeConnection() {
+	c.timeoutCanceler <- struct{}{}
+	c.conn.cclose(time.NewTimer(10 * time.Second))
+	close(c.payload)
+	//close(c.smd)
+	log.Println("closing client")
+}
+
+func (c *Client) getRTT() time.Duration {
+	c.rttLock.Lock()
+	defer c.rttLock.Unlock()
+	return c.rtt
+}
+
+func (c *Client) setRTT(rtt time.Duration) {
+	c.rttLock.Lock()
+	defer c.rttLock.Unlock()
+	c.rtt = rtt
 }
 
 func (c *Client) sendAcks(conn connection) {
@@ -122,12 +181,15 @@ func (c *Client) sendAcks(conn connection) {
 
 	ackSendMap := map[uint8]time.Time{}
 	rttMap := map[uint8]time.Duration{}
-	rtt := time.Duration(1 * time.Second) // TODO: calculate real rtt or use this as initial timeout?
 
-	timeout := time.NewTimer(rtt)
+	timeout := time.NewTimer(1 * time.Minute) // TODO: use better timeout before first acknum is received
 	for {
 		select {
-		case an := <-c.ackNum:
+		case an, more := <-c.ackNum:
+			if !more {
+				log.Println("closing ack sender")
+				return
+			}
 			rttMap[an] = time.Since(ackSendMap[an])
 
 		case <-timeout.C:
@@ -144,16 +206,13 @@ func (c *Client) sendAcks(conn connection) {
 
 			ackSendMap[nextAckNumber] = time.Now()
 			nextAckNumber = (nextAckNumber + 1) % 255
-			rtt = avg(rttMap)
-			timeout = time.NewTimer(rtt / 4)
+			c.rtt = avg(rttMap)
+			timeout = time.NewTimer(c.rtt / 4)
 		}
 	}
 }
 
 func (c *Client) getAckData() (res []ResendEntry, fi uint16, off uint64) {
-	c.resultLock.Lock()
-	defer c.resultLock.Unlock()
-
 	for i := 0; i <= len(c.results); i++ {
 		c.results[i].lock.Lock()
 		if c.results[i].started {
@@ -184,35 +243,46 @@ func avg(ackTimes map[uint8]time.Duration) time.Duration {
 func (c *Client) writerToApp(fi int) {
 	for p := range c.results[fi].payload {
 		_, err := c.results[fi].pipeWriter.Write(p.data)
+		// TODO: Finish up result, set done to true?
 		if err != nil {
 			// TODO: notify client?
 		}
 	}
+	err := c.results[fi].pipeWriter.Close()
+	log.Printf("Closing app writer with err: %v\n", err)
 }
 
 func (c *Client) bufferResults() {
-	timeout := time.NewTimer(30 * time.Second) //TODO: Adjust timeout duration
+	for p := range c.payload {
+		log.Printf("received payload to buffer: %v\n", p.offset)
+		i := p.fileIndex
 
-	for {
-		select {
-		case p := <-c.payload:
-			i := p.fileIndex
-
-			if p.offset != c.results[i].pointer {
-				c.results[i].buffer = append(c.results[i].buffer, *p)
-				continue
-			}
-
-			c.results[i].pointer++
-			c.results[i].payload <- p
-			c.ackNum <- p.ackNumber
-		case <-timeout.C:
-			// TODO: Close connection. Maybe retry?
+		c.results[i].lock.Lock()
+		if p.offset != c.results[i].pointer {
+			c.results[i].buffer = append(c.results[i].buffer, *p)
+			c.results[i].lock.Unlock()
+			continue
 		}
+
+		c.results[i].pointer++
+		c.results[i].payload <- p
+		c.results[i].lock.Unlock()
+
+		c.ackNum <- p.ackNumber
 	}
+	for i := 0; i < len(c.results); i++ {
+		c.results[i].lock.Lock()
+		if !c.results[i].done {
+			c.results[i].done = true
+			close(c.results[i].payload)
+		}
+		c.results[i].lock.Unlock()
+	}
+	close(c.ackNum)
 }
 
 func (c *Client) handleMetadata(_ io.Writer, p *packet) {
+	log.Println("running metadata handler")
 	smd := ServerMetaData{}
 	err := smd.UnmarshalBinary(p.data)
 	if err != nil {
@@ -225,6 +295,7 @@ func (c *Client) handleMetadata(_ io.Writer, p *packet) {
 }
 
 func (c *Client) handleServerPayload(_ io.Writer, p *packet) {
+	log.Println("running payload handler")
 	pl := ServerPayload{}
 	err := pl.UnmarshalBinary(p.data)
 	if err != nil {
@@ -235,6 +306,7 @@ func (c *Client) handleServerPayload(_ io.Writer, p *packet) {
 }
 
 func (c *Client) handleClose(_ io.Writer, p *packet) {
+	log.Println("running close handler")
 	cl := CloseConnection{}
 	err := cl.UnmarshalBinary(p.data)
 	if err != nil {

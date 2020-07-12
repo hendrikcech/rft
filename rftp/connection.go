@@ -6,6 +6,8 @@ import (
 	"io"
 	"log"
 	"net"
+	"sync"
+	"time"
 )
 
 type packet struct {
@@ -31,12 +33,15 @@ type connection interface {
 	listen(host string) (func(), error)
 	connectTo(host string) error
 	send(msg encoding.BinaryMarshaler) error
+	cclose(*time.Timer) error
 }
 
 type udpConnection struct {
 	socket     *net.UDPConn
 	handlers   map[uint8]packetHandler
 	bufferSize int
+
+	closed chan struct{}
 }
 
 type responseWriter func([]byte) (int, error)
@@ -49,6 +54,7 @@ func NewUdpConnection() *udpConnection {
 	return &udpConnection{
 		handlers:   make(map[uint8]packetHandler),
 		bufferSize: 1024,
+		closed:     make(chan struct{}),
 	}
 }
 
@@ -56,7 +62,21 @@ func (c *udpConnection) handle(msgType uint8, h packetHandler) {
 	c.handlers[msgType] = h
 }
 
+func (c *udpConnection) cclose(timeout *time.Timer) error {
+	err := c.socket.Close()
+	log.Printf("closed connection with err: %v\n", err)
+	select {
+	case <-c.closed:
+		log.Println("closed connection")
+	case <-timeout.C:
+		log.Println("timeout while closing connection")
+	}
+	return err
+}
+
 func (c *udpConnection) receive() error {
+	var wg sync.WaitGroup
+
 	for {
 		msg := make([]byte, c.bufferSize)
 		n, addr, err := c.socket.ReadFromUDP(msg)
@@ -81,9 +101,17 @@ func (c *udpConnection) receive() error {
 			data:       msg[header.hdrLen:n],
 			remoteAddr: addr,
 		}
-		go c.handlers[header.msgType].handle(rw, p)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			c.handlers[header.msgType].handle(rw, p)
+		}()
 	}
 
+	log.Println("finishing connection close")
+	wg.Wait()
+	c.closed <- struct{}{}
+	log.Println("finished connection close")
 	return nil
 }
 

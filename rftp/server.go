@@ -59,10 +59,13 @@ func (s *Server) handleRequest(w io.Writer, p *packet) {
 }
 
 func (s *Server) handleACK(_ io.Writer, p *packet) {
-	ack := &ClientAck{}
+	ack := &ClientAck{
+		ackNumber: p.ackNum,
+	}
 	err := ack.UnmarshalBinary(p.data)
 	if err != nil {
 		// TODO: Close connection?
+		log.Println("failed to parse ack")
 	}
 	s.connMgr.handle(p.remoteAddr, ack)
 }
@@ -140,6 +143,7 @@ func (s *Server) accept(w io.Writer, addr *net.UDPAddr, cr *ClientRequest) {
 }
 
 type clientConnection struct {
+	rtt    time.Duration
 	ch     chan *ClientAck
 	socket io.Writer
 }
@@ -194,62 +198,72 @@ func (c *clientConnection) sendData(ackChan <-chan *ClientAck, cr *ClientRequest
 	ch := make(chan encoding.BinaryMarshaler, 1024)
 
 	go func() {
+		c.rtt = 1 * time.Second
 		ticker := time.NewTicker(1 * time.Second)
-		timeout := time.NewTimer(30 * time.Second) //TODO: Adjust timeout duration
+		timeout := time.NewTimer(3 * c.rtt) //TODO: Adjust timeout duration
 
 		counter := uint32(0)
-		maxTransmission := 10 + cr.maxTransmissionRate
+		maxTransmission := 20000 + cr.maxTransmissionRate
 		lastAck := uint8(0)
 
 		for {
+			log.Printf("server send loop budget counter: %v\n", counter)
 			// this blocks when maxTransmissionRate is already used
 			if counter >= maxTransmission {
 				select {
 				case <-ticker.C:
 					counter = 0
 				case ack := <-ackChan:
-					maxTransmission = ack.maxTransmissionRate
+					//maxTransmission = ack.maxTransmissionRate
 					lastAck = ack.ackNumber
+					log.Printf("received ack while waiting for budget: %v, with resend entries:\n%v\n", lastAck, ack.resendEntries)
+					timeout = time.NewTimer(3 * c.rtt)
 					// TODO: schedule resends
 
 					// continue to recheck maxTransmission capacity
-					continue
 				}
 			}
 
-			select {
-			case bm, more := <-ch:
-				if !more {
-					// TODO: Cleanup?
+			for {
+				select {
+				case bm, more := <-ch:
+					if !more {
+						// TODO: Cleanup?
+						return
+					}
+
+					p, ok := bm.(ServerPayload)
+					var err error
+					if ok {
+						p.ackNumber = lastAck
+						err = sendTo(c.socket, p)
+					} else {
+						err = sendTo(c.socket, bm)
+					}
+					if err != nil {
+						// TODO: What now? retry vs. close?
+					}
+					counter++
+
+				case ack := <-ackChan:
+					//maxTransmission = ack.maxTransmissionRate
+					lastAck = ack.ackNumber
+					log.Printf("received ack: %v, with resend entries:\n%v\n", lastAck, ack.resendEntries)
+					timeout = time.NewTimer(3 * c.rtt)
+					// TODO: schedule resends and drop acked bytes
+
+				case <-ticker.C:
+					counter = 0
+
+				case <-timeout.C:
+					// TODO: Cleanup channels etc.
+					// TODO: Update (extend) timeout when acks arrive
+					log.Println("connection timed out")
 					return
 				}
-
-				p, ok := bm.(ServerPayload)
-				var err error
-				if ok {
-					p.ackNumber = lastAck
-					err = sendTo(c.socket, p)
-				} else {
-					err = sendTo(c.socket, bm)
+				if counter >= maxTransmission {
+					break
 				}
-				if err != nil {
-					// TODO: What now? retry vs. close?
-				}
-				counter++
-
-			case ack := <-ackChan:
-				maxTransmission = ack.maxTransmissionRate
-				lastAck = ack.ackNumber
-				// TODO: schedule resends and drop acked bytes
-
-			case <-ticker.C:
-				counter = 0
-
-			case <-timeout.C:
-				// TODO: Cleanup channels etc.
-				// TODO: Update (extend) timeout when acks arrive
-				log.Println("connection timed out")
-				return
 			}
 		}
 	}()
@@ -267,8 +281,8 @@ func (c *clientConnection) sendData(ackChan <-chan *ClientAck, cr *ClientRequest
 		}
 		buffers = append(buffers, b)
 
+		log.Printf("reading file of size %v", rss[i].size)
 		for j := uint64(0); j < smd.size; j += 1024 {
-			log.Printf("reading file of size %v", rss[i].size)
 			buf := make([]byte, 1024)
 			off, err := rss[i].rs.Seek(int64(j), io.SeekStart)
 			if err != nil {
@@ -284,9 +298,6 @@ func (c *clientConnection) sendData(ackChan <-chan *ClientAck, cr *ClientRequest
 			if err != nil {
 				// TODO
 			}
-			// io.CopyN(&buf, io.TeeReader(rss[i].rs, b.hasher), 1024) Copy
-			// doesn't work because it doesn't seem to care about seek (how can
-			// it though...)
 			payload := ServerPayload{
 				fileIndex: uint16(i),
 				offset:    j / 1024,

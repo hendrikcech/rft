@@ -53,7 +53,7 @@ func (rw responseWriter) Write(bs []byte) (int, error) {
 func NewUdpConnection() *udpConnection {
 	return &udpConnection{
 		handlers:   make(map[uint8]packetHandler),
-		bufferSize: 1024,
+		bufferSize: 2048,
 		closed:     make(chan struct{}),
 	}
 }
@@ -100,6 +100,7 @@ func (c *udpConnection) receive() error {
 			os:         header.options,
 			data:       msg[header.hdrLen:n],
 			remoteAddr: addr,
+			ackNum:     header.ackNum,
 		}
 		wg.Add(1)
 		go func() {
@@ -165,6 +166,7 @@ func sendTo(writer io.Writer, msg encoding.BinaryMarshaler) error {
 		header.msgType = msgClientRequest
 	case ClientAck:
 		header.msgType = msgClientAck
+		header.ackNum = v.ackNumber
 	case ServerMetaData:
 		header.msgType = msgServerMetadata
 	case ServerPayload:

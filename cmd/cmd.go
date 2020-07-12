@@ -26,14 +26,14 @@ var rootCmd = &cobra.Command{
 		files := args[1:]
 
 		if s {
-			fmt.Printf("running server on host '%v' and dir %v\n", host, files[0])
+			log.Printf("running server on host '%v' and dir %v\n", host, files[0])
 			server := rftp.NewServer(rftp.DirectoryLister(files[0]), rftp.NewUdpConnection())
 			server.Listen(fmt.Sprintf(":%v", t))
 			return
 		}
 
 		hs := fmt.Sprintf("%v:%v", host, t)
-		fmt.Printf("running client request to host '%v' for files %v\n", hs, files)
+		log.Printf("running client request to host '%v' for files %v\n", hs, files)
 		rs, err := rftp.Request(hs, files)
 		if err != nil {
 			log.Printf("error on request: %v", err)

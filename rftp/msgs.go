@@ -228,6 +228,10 @@ type ServerPayload struct {
 	data      []byte
 }
 
+func (s *ServerPayload) String() string {
+	return fmt.Sprintf("%v", *s)
+}
+
 func (s ServerPayload) MarshalBinary() ([]byte, error) {
 	buf := new(bytes.Buffer)
 	err := binary.Write(buf, binary.BigEndian, s.fileIndex)
@@ -243,7 +247,8 @@ func (s ServerPayload) MarshalBinary() ([]byte, error) {
 		return nil, err
 	}
 
-	_, err = buf.Write(s.data)
+	n, err := buf.Write(s.data)
+	log.Printf("wrote %v bytes to payload packet\n", n)
 	bs := buf.Bytes()
 	return bs, err
 }
@@ -265,13 +270,17 @@ type ResendEntry struct {
 	length    uint8
 }
 
+func (r *ResendEntry) String() string {
+	return fmt.Sprintf("%v", *r)
+}
+
 type ClientAck struct {
 	ackNumber           uint8
 	fileIndex           uint16
 	status              uint8
 	maxTransmissionRate uint32
 	offset              uint64
-	resendEntries       []ResendEntry
+	resendEntries       []*ResendEntry
 }
 
 // make offset BigEndian and cut off the first (most significant) byte
@@ -346,7 +355,7 @@ func (c *ClientAck) UnmarshalBinary(data []byte) error {
 	if len(data) > 14 {
 		reBytes := data[14:]
 		for i := 0; i < len(reBytes)/10; i++ {
-			re := ResendEntry{}
+			re := &ResendEntry{}
 			re.fileIndex = binary.BigEndian.Uint16(reBytes[:2])
 			re.offset = uintOffset(reBytes[2:9])
 			re.length = uint8(reBytes[9])

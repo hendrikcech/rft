@@ -11,6 +11,7 @@ import (
 type packet struct {
 	os         []option
 	data       []byte
+	ackNum     uint8
 	remoteAddr *net.UDPAddr
 }
 

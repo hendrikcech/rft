@@ -67,10 +67,11 @@ func (c *Client) Request(conn connection, host string, files []string) ([]Result
 
 	c.smd = make(chan *ServerMetaData, len(fs))
 	c.payload = make(chan *ServerPayload, 1024*len(fs))
+	c.ackNum = make(chan uint8, 256)
 
-	conn.handle(msgServerMetadata, handlerFunc(c.handleMetadata))
-	conn.handle(msgServerPayload, handlerFunc(c.handleServerPayload))
-	conn.handle(msgClose, handlerFunc(c.handleClose))
+	conn.handle(msgServerMetadata, c.ackNumHandler(handlerFunc(c.handleMetadata)))
+	conn.handle(msgServerPayload, c.ackNumHandler(handlerFunc(c.handleServerPayload)))
+	conn.handle(msgClose, c.ackNumHandler(handlerFunc(c.handleClose)))
 
 	if err := conn.connectTo(host); err != nil {
 		return nil, err
@@ -106,6 +107,13 @@ func (c *Client) Request(conn connection, host string, files []string) ([]Result
 		return c.results, fmt.Errorf(strings.Join(errStrings, ", "))
 	}
 	return c.results, nil
+}
+
+func (c *Client) ackNumHandler(hf handlerFunc) handlerFunc {
+	return func(w io.Writer, p *packet) {
+		c.ackNum <- p.ackNum
+		hf(w, p)
+	}
 }
 
 func (c *Client) sendAcks(conn connection) {

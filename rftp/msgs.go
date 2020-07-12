@@ -34,37 +34,21 @@ func (o *option) MarshalBinary() (data []byte, err error) {
 type MsgHeader struct {
 	version   uint8
 	msgType   uint8
+	ackNum    uint8
 	optionLen uint8
 	options   []option
 
 	hdrLen int
 }
 
-func NewMsgHeader(msgType uint8, os ...option) MsgHeader {
-	olen := len(os)
-	if olen > 255 {
-		// TODO: Don't panic? Maybe return error
-		panic("too many options")
-	}
-	l := 0
-	for _, o := range os {
-		l += 2 + int(o.length)
-	}
-
-	return MsgHeader{
-		version:   0,
-		msgType:   0,
-		optionLen: uint8(olen),
-		options:   os,
-
-		hdrLen: l + 2,
-	}
-}
-
 func (s MsgHeader) MarshalBinary() ([]byte, error) {
 	buf := new(bytes.Buffer)
 	vt := s.version<<4 ^ s.msgType
 	err := binary.Write(buf, binary.BigEndian, vt)
+	if err != nil {
+		return nil, err
+	}
+	err = binary.Write(buf, binary.BigEndian, s.ackNum)
 	if err != nil {
 		return nil, err
 	}
@@ -90,10 +74,11 @@ func (s *MsgHeader) UnmarshalBinary(data []byte) error {
 	vt := uint8(data[0])
 	s.version = vt & 0xF0 >> 4
 	s.msgType = vt & 0x0F
-	s.optionLen = uint8(data[1])
+	s.ackNum = uint8(data[1])
+	s.optionLen = uint8(data[2])
 
 	// TODO: Parse options and fix hdrLen
-	s.hdrLen = 2
+	s.hdrLen = 3
 
 	return nil
 }
@@ -249,10 +234,6 @@ func (s ServerPayload) MarshalBinary() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	err = binary.Write(buf, binary.BigEndian, s.ackNumber)
-	if err != nil {
-		return nil, err
-	}
 	sb, err := sevenByteOffset(s.offset)
 	if err != nil {
 		return nil, err
@@ -269,12 +250,11 @@ func (s ServerPayload) MarshalBinary() ([]byte, error) {
 
 func (s *ServerPayload) UnmarshalBinary(data []byte) error {
 	s.fileIndex = binary.BigEndian.Uint16(data[0:2])
-	s.ackNumber = uint8(data[2])
 
-	s.offset = uintOffset(data[3:10])
+	s.offset = uintOffset(data[2:9])
 
-	if len(data) > 10 {
-		s.data = data[10:]
+	if len(data) > 9 {
+		s.data = data[9:]
 	}
 	return nil
 }
@@ -312,11 +292,7 @@ func uintOffset(seven []byte) uint64 {
 
 func (c ClientAck) MarshalBinary() ([]byte, error) {
 	buf := new(bytes.Buffer)
-	err := binary.Write(buf, binary.BigEndian, c.ackNumber)
-	if err != nil {
-		return nil, err
-	}
-	err = binary.Write(buf, binary.BigEndian, c.fileIndex)
+	err := binary.Write(buf, binary.BigEndian, c.fileIndex)
 	if err != nil {
 		return nil, err
 	}
@@ -362,14 +338,13 @@ func (c ClientAck) MarshalBinary() ([]byte, error) {
 }
 
 func (c *ClientAck) UnmarshalBinary(data []byte) error {
-	c.ackNumber = uint8(data[0])
-	c.fileIndex = binary.BigEndian.Uint16(data[1:3])
-	c.status = uint8(data[3])
-	c.maxTransmissionRate = binary.BigEndian.Uint32(data[4:8])
-	c.offset = uintOffset(data[8:15])
+	c.fileIndex = binary.BigEndian.Uint16(data[0:2])
+	c.status = uint8(data[2])
+	c.maxTransmissionRate = binary.BigEndian.Uint32(data[3:7])
+	c.offset = uintOffset(data[7:14])
 
-	if len(data) > 15 {
-		reBytes := data[15:]
+	if len(data) > 14 {
+		reBytes := data[14:]
 		for i := 0; i < len(reBytes)/10; i++ {
 			re := ResendEntry{}
 			re.fileIndex = binary.BigEndian.Uint16(reBytes[:2])

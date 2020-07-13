@@ -73,7 +73,7 @@ func (c *Client) Request(conn connection, host string, files []string) ([]Result
 			buffer:     newChunkQueue(uint16(i)),
 			pipeReader: r,
 			pipeWriter: w,
-			payload:    make(chan *ServerPayload, 1024),
+			payload:    make(chan *ServerPayload, 10),
 		})
 		go c.writerToApp(i)
 	}
@@ -277,15 +277,23 @@ func (c *Client) bufferResults() {
 		}
 
 		c.results[i].pointer++
+
+		c.results[i].lock.Unlock()
+
 		c.results[i].payload <- p
+
+		c.results[i].lock.Lock()
 
 		if c.results[i].buffer.Len() > 0 {
 			top := c.results[i].buffer.Top()
 			log.Printf("buffer top: %v\n", top)
 			for top == c.results[i].pointer {
 				p := heap.Pop(c.results[i].buffer).(*ServerPayload)
-				c.results[i].payload <- p
 				c.results[i].pointer++
+
+				c.results[i].lock.Unlock()
+				c.results[i].payload <- p
+				c.results[i].lock.Lock()
 			}
 		}
 

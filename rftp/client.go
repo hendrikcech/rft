@@ -2,7 +2,6 @@ package rftp
 
 import (
 	"container/heap"
-	"encoding"
 	"errors"
 	"fmt"
 	"io"
@@ -12,16 +11,6 @@ import (
 	"sync"
 	"time"
 )
-
-var defaultClient = Client{}
-
-func Request(host string, files []string) ([]Result, error) {
-	return defaultClient.Request(NewUdpConnection(), host, files)
-}
-
-type Requester interface {
-	Request(string, encoding.BinaryMarshaler) (encoding.BinaryUnmarshaler, error)
-}
 
 type Result struct {
 	lock       sync.Mutex

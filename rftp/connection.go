@@ -37,6 +37,7 @@ type connection interface {
 }
 
 type udpConnection struct {
+	lossSim    *LossSimulator
 	socket     *net.UDPConn
 	handlers   map[uint8]packetHandler
 	bufferSize int
@@ -50,8 +51,9 @@ func (rw responseWriter) Write(bs []byte) (int, error) {
 	return rw(bs)
 }
 
-func NewUdpConnection() *udpConnection {
+func NewUdpConnection(lossSim *LossSimulator) *udpConnection {
 	return &udpConnection{
+		lossSim:    lossSim,
 		handlers:   make(map[uint8]packetHandler),
 		bufferSize: 2048,
 		closed:     make(chan struct{}),
@@ -84,6 +86,10 @@ func (c *udpConnection) receive() error {
 			// TODO: check error and maybe stop listening and shutdown
 			log.Printf("discarded packet due to error: %v", err)
 			break
+		}
+
+		if c.lossSim.shouldDrop() {
+			continue
 		}
 
 		header := &MsgHeader{}

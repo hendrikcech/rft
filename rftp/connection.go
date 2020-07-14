@@ -281,3 +281,7 @@ func (c testConnection) send(msg encoding.BinaryMarshaler) error {
 	c.sentChan <- msg
 	return nil
 }
+
+func (c testConnection) cclose(timeout *time.Timer) error {
+	return nil
+}

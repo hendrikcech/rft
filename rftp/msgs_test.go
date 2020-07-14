@@ -107,7 +107,7 @@ func TestDataMarshalling(t *testing.T) {
 func TestAcknowledgementMarshalling(t *testing.T) {
 	tests := map[string]ClientAck{
 		"no-missing": {0, 0, 0, 0, 0, nil},
-		"missing":    {0, 0, 0, 0, 0, []ResendEntry{{0, 1, 2}}},
+		"missing":    {0, 0, 0, 0, 0, []*ResendEntry{{0, 1, 2}}},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {

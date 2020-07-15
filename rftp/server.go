@@ -200,10 +200,10 @@ func (c *clientConnection) sendData(ackChan <-chan *ClientAck, cr *ClientRequest
 	go func() {
 		c.rtt = 1 * time.Second
 		ticker := time.NewTicker(1 * time.Second)
-		timeout := time.NewTimer(3 * c.rtt) //TODO: Adjust timeout duration
+		timeout := time.NewTimer(7 * c.rtt) //TODO: Adjust timeout duration
 
 		counter := uint32(0)
-		maxTransmission := 20000 + cr.maxTransmissionRate
+		maxTransmission := 10 + cr.maxTransmissionRate
 		lastAck := uint8(0)
 
 		for {

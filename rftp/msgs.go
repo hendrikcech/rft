@@ -247,8 +247,7 @@ func (s ServerPayload) MarshalBinary() ([]byte, error) {
 		return nil, err
 	}
 
-	n, err := buf.Write(s.data)
-	log.Printf("wrote %v bytes to payload packet\n", n)
+	_, err = buf.Write(s.data)
 	bs := buf.Bytes()
 	return bs, err
 }

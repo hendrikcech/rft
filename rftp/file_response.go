@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log"
+	"sync"
 )
 
 type FileResponse struct {
@@ -14,10 +15,12 @@ type FileResponse struct {
 	pc chan *ServerPayload
 	cc chan struct{}
 
-	preader *io.PipeReader
-	pwriter *io.PipeWriter
-	buffer  *chunkQueue
-	head    uint64
+	preader  *io.PipeReader
+	pwriter  *io.PipeWriter
+	buffer   *chunkQueue
+	head     uint64
+	metadata bool
+	lock     sync.Mutex
 
 	size     uint64
 	chunks   uint64
@@ -45,8 +48,38 @@ func (f *FileResponse) Read(p []byte) (n int, err error) {
 	return f.preader.Read(p)
 }
 
-func (f *FileResponse) getResendEntries() []*ResendEntry {
-	return f.buffer.Gaps(f.head)
+type resendData struct {
+	started  bool
+	metadata bool
+	head     uint64
+	res      []*ResendEntry
+}
+
+func (f *FileResponse) getResendEntries() *resendData {
+	f.lock.Lock()
+	defer f.lock.Unlock()
+
+	// TODO: Make this call threadsafe
+	res := f.buffer.Gaps(f.head)
+	if !f.metadata {
+		res = append(res, &ResendEntry{
+			fileIndex: f.index,
+			offset:    f.head,
+			length:    0,
+		})
+	} else if f.head < f.chunks {
+		res = append(res, &ResendEntry{
+			fileIndex: f.index,
+			offset:    f.head,
+			length:    uint8(f.chunks - f.head),
+		})
+	}
+	return &resendData{
+		started:  (f.head > 0) || f.buffer.Len() > 0,
+		metadata: f.metadata,
+		head:     f.head,
+		res:      res,
+	}
 }
 
 func (f *FileResponse) write(done chan<- uint16) {
@@ -56,12 +89,15 @@ func (f *FileResponse) write(done chan<- uint16) {
 		select {
 		case metadata := <-f.mc:
 			log.Println("fileresponse received metadata")
+			f.lock.Lock()
 			f.size = metadata.size
 			f.chunks = f.size / 1024
 			if f.size%1024 > 0 {
 				f.chunks++
 			}
 			f.checksum = metadata.checkSum
+			f.metadata = true
+			f.lock.Unlock()
 
 		case payload := <-f.pc:
 			log.Printf("fileresponse received payload %v\n", payload.offset)

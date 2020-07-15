@@ -2,7 +2,6 @@ package rftp
 
 import (
 	"container/heap"
-	"fmt"
 	"testing"
 )
 
@@ -29,9 +28,9 @@ func TestChunkQueue(t *testing.T) {
 		q.items[i] = v
 	}
 
-	fmt.Printf("%v\n", q)
+	//	fmt.Printf("%v\n", q)
 	heap.Init(&q)
-	fmt.Printf("%v\n", q)
+	//	fmt.Printf("%v\n", q)
 
 	next := &ServerPayload{
 		offset: 500,
@@ -39,12 +38,11 @@ func TestChunkQueue(t *testing.T) {
 	items = append([]*ServerPayload{next}, items...)
 	heap.Push(&q, next)
 
-	gaps := q.Gaps(0)
-	fmt.Printf("gaps: %v\n", gaps)
+	//gaps := q.Gaps(0)
+	//fmt.Printf("gaps: %v\n", gaps)
 
 	for q.Len() > 0 {
 		item := heap.Pop(&q).(*ServerPayload)
-		fmt.Printf("item offset: %v\n", item.offset)
 		if items[q.Len()] != item {
 			t.Errorf("heap.Pop() = %v, want %v", item, items[q.Len()])
 		}

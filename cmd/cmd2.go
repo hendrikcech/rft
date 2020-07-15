@@ -1,4 +1,4 @@
-// +build !s2
+// +build s2
 
 // Package cmd implements command line handling
 package cmd
@@ -6,6 +6,7 @@ package cmd
 import (
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"os"
 
@@ -41,12 +42,13 @@ var rootCmd = &cobra.Command{
 
 		if s {
 			log.Printf("running server on host '%v' and dir %v\n", host, files[0])
-			server := rftp.NewServer(rftp.DirectoryLister(files[0]))
+			server := rftp.NewServer()
 			if p != -1 || q != -1 {
 				lossSim := rftp.NewMarkovLossSimulator(p, q)
 				server.Conn.LossSim(lossSim)
 				rand.Seed(time.Now().UTC().UnixNano())
 			}
+			server.SetFileHandler(directoryHandler(files[0]))
 			server.Listen(fmt.Sprintf(":%v", t))
 			return
 		}
@@ -76,6 +78,25 @@ var rootCmd = &cobra.Command{
 		}
 
 	},
+}
+
+func directoryHandler(dirname string) rftp.FileHandler {
+	fi, err := ioutil.ReadDir(dirname)
+	if err != nil {
+		return nil
+	}
+	return func(name string, offset uint64) *io.SectionReader {
+		for _, f := range fi {
+			if f.Name() == name {
+				file, err := os.Open(f.Name())
+				if err != nil {
+					return nil
+				}
+				return io.NewSectionReader(file, int64(offset), f.Size())
+			}
+		}
+		return nil
+	}
 }
 
 func init() {

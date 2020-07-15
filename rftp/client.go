@@ -22,7 +22,7 @@ type Client struct {
 	rtt  time.Duration
 
 	responses []*FileResponse
-	ack       chan ackData
+	ack       chan uint8
 	err       chan struct{}
 	closeMsg  chan struct{}
 	done      chan uint16
@@ -38,7 +38,7 @@ func (c *Client) Request(host string, files []string) ([]*FileResponse, error) {
 
 	fs := make([]FileDescriptor, len(files))
 	c.responses = make([]*FileResponse, len(files))
-	c.ack = make(chan ackData, 1024)
+	c.ack = make(chan uint8, 1024)
 	c.err = make(chan struct{})
 	c.closeMsg = make(chan struct{})
 	c.done = make(chan uint16, len(fs))
@@ -135,26 +135,45 @@ func (c *Client) waitForFirstResponse(try int) error {
 }
 
 func (c *Client) sendAcks(conn connection) {
-	maxFile := uint16(0)
-	maxOff := uint64(0)
-
-	timeout := time.NewTimer(c.rtt)
+	timeout := time.NewTimer(20 * c.rtt)
 	ackSendMap := map[uint8]time.Time{}
 	nextAckNum := uint8(1)
 	lastPing := time.Now()
 
 	for {
 		select {
+		case ackNum := <-c.ack:
+			if send, ok := ackSendMap[ackNum]; ok {
+				c.rtt = time.Since(send)
+			}
+			log.Println("set last ping1")
+			lastPing = time.Now()
+		default:
+		}
+
+		select {
 		case <-timeout.C:
-			if time.Since(lastPing) > 1*time.Second+3*c.rtt {
+			if time.Since(lastPing) > 1*time.Second+200*c.rtt {
 				log.Println("connection timed out")
 				c.err <- struct{}{}
+				return
 			}
+			maxFile := uint16(0)
+			maxOff := uint64(0)
+			status := uint8(0)
 			res := []*ResendEntry{}
-			for _, r := range c.responses {
-				fres := r.getResendEntries()
-				if fres != nil {
-					res = append(res, r.getResendEntries()...)
+			for i, r := range c.responses {
+				index := uint16(i)
+				rd := r.getResendEntries()
+				if rd.res != nil {
+					res = append(res, rd.res...)
+				}
+				if index > maxFile && rd.started {
+					maxFile = index
+					maxOff = rd.head
+					if !rd.metadata {
+						status = 1
+					}
 				}
 			}
 			ack := ClientAck{
@@ -163,9 +182,10 @@ func (c *Client) sendAcks(conn connection) {
 				fileIndex:           maxFile,
 				offset:              maxOff,
 				resendEntries:       res,
+				status:              status,
 			}
 			ackSendMap[nextAckNum] = time.Now()
-			log.Printf("sending ack: %v\n", ack)
+			log.Printf("sending ack: %v\n", ack.String())
 			c.Conn.send(ack)
 
 			nextAckNum = (nextAckNum + 1) % 255
@@ -173,17 +193,11 @@ func (c *Client) sendAcks(conn connection) {
 			if nextAckNum == 0 {
 				nextAckNum++
 			}
-			timeout = time.NewTimer(c.rtt)
+			timeout = time.NewTimer(20 * c.rtt)
 
-		case ad := <-c.ack:
-			if ad.fi > maxFile {
-				maxFile = ad.fi
-				maxOff = ad.off
-			}
-			if ad.fi == maxFile && ad.off > maxOff {
-				maxOff = ad.off
-			}
-			if send, ok := ackSendMap[ad.num]; ok {
+		case ackNum := <-c.ack:
+			log.Println("set last ping2")
+			if send, ok := ackSendMap[ackNum]; ok {
 				c.rtt = time.Since(send)
 			}
 			lastPing = time.Now()
@@ -195,12 +209,6 @@ func (c *Client) sendAcks(conn connection) {
 	}
 }
 
-type ackData struct {
-	num uint8
-	fi  uint16
-	off uint64
-}
-
 func (c *Client) handleMetadata(_ io.Writer, p *packet) {
 	smd := ServerMetaData{}
 	err := smd.UnmarshalBinary(p.data)
@@ -208,9 +216,7 @@ func (c *Client) handleMetadata(_ io.Writer, p *packet) {
 		// TODO: what now? Rerequest metadata.
 		// Maybe log something or cancel the whole thing?
 	}
-	c.ack <- ackData{
-		num: p.ackNum,
-	}
+	c.ack <- p.ackNum
 	log.Printf("handling metadata for file %v\n", smd.fileIndex)
 	c.responses[smd.fileIndex].mc <- &smd
 }
@@ -222,11 +228,7 @@ func (c *Client) handleServerPayload(_ io.Writer, p *packet) {
 		// TODO: what now? Rerequest payload
 		// Maybe log something or cancel the whole thing?
 	}
-	c.ack <- ackData{
-		num: p.ackNum,
-		fi:  pl.fileIndex,
-		off: pl.offset,
-	}
+	c.ack <- p.ackNum
 	log.Printf("handling payload %v for file %v\n", pl.offset, pl.fileIndex)
 	c.responses[pl.fileIndex].pc <- &pl
 }
@@ -237,8 +239,6 @@ func (c *Client) handleClose(_ io.Writer, p *packet) {
 	if err != nil {
 		// TODO: what now? Just drop everything?
 	}
-	c.ack <- ackData{
-		num: p.ackNum,
-	}
+	c.ack <- p.ackNum
 	c.closeMsg <- struct{}{}
 }

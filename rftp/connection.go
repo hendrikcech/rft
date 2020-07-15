@@ -51,7 +51,7 @@ func (rw responseWriter) Write(bs []byte) (int, error) {
 	return rw(bs)
 }
 
-func NewUdpConnection(lossSim LossSimulator) *udpConnection {
+func NewUDPConnection(lossSim LossSimulator) *udpConnection {
 	return &udpConnection{
 		lossSim:    lossSim,
 		handlers:   make(map[uint8]packetHandler),

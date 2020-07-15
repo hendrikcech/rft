@@ -1,322 +1,204 @@
 package rftp
 
 import (
-	"container/heap"
-	"encoding"
 	"errors"
 	"fmt"
 	"io"
 	"log"
 	"math"
-	"strings"
-	"sync"
 	"time"
 )
 
-var defaultClient = Client{Conn: NewUDPConnection()}
+var defaultClient = Client{
+	Conn: NewUDPConnection(),
+}
 
-func Request(host string, files []string) ([]Result, error) {
+func Request(host string, files []string) ([]*FileResponse, error) {
 	return defaultClient.Request(host, files)
 }
 
-type Requester interface {
-	Request(string, encoding.BinaryMarshaler) (encoding.BinaryUnmarshaler, error)
-}
-
-type Result struct {
-	lock       sync.Mutex
-	buffer     *chunkQueue
-	pipeReader *io.PipeReader
-	pipeWriter *io.PipeWriter
-	payload    chan *ServerPayload
-	pointer    uint64 // Next byte position to write out
-	offset     uint64 // Offset as defined by rft
-	done       bool   // true if error or all chunks written
-	size       uint64
-	checksum   [16]byte
-	err        error
-}
-
-// TODO: After replacing buffer by a useful datastructure, calculate the
-// complement of the buffered elements
-func (r *Result) getResendEntries() []*ResendEntry {
-	log.Printf("get resend entries from %v\n", r.pointer)
-	return r.buffer.Gaps(r.pointer)
-}
-
-func (r *Result) Read(p []byte) (n int, err error) {
-	return r.pipeReader.Read(p)
-}
-
 type Client struct {
-	Conn    connection
-	results []Result
-	rttLock sync.Mutex
-	rtt     time.Duration
-	smd     chan *ServerMetaData
-	payload chan *ServerPayload
-	ackNum  chan uint8
+	Conn connection
+	rtt  time.Duration
 
-	timeout         *time.Timer
-	timeoutCanceler chan struct{}
+	responses []*FileResponse
+	ack       chan ackData
+	err       chan struct{}
+	closeMsg  chan struct{}
+	done      chan uint16
+	stopAck   chan struct{}
+	start     time.Time
 }
 
-func (c *Client) Request(host string, files []string) ([]Result, error) {
+func (c *Client) Request(host string, files []string) ([]*FileResponse, error) {
+
 	if len(files) > 65536 {
 		return nil, errors.New("too many files in request, use max. 65536 files per request")
 	}
-	fs := []FileDescriptor{}
+
+	fs := make([]FileDescriptor, len(files))
+	c.responses = make([]*FileResponse, len(files))
+	c.ack = make(chan ackData, 1024)
+	c.err = make(chan struct{})
+	c.closeMsg = make(chan struct{})
+	c.done = make(chan uint16, len(fs))
+	c.stopAck = make(chan struct{})
+
 	for i, f := range files {
-		fs = append(fs, FileDescriptor{0, f})
-		r, w := io.Pipe()
-		c.results = append(c.results, Result{
-			buffer:     newChunkQueue(uint16(i)),
-			pipeReader: r,
-			pipeWriter: w,
-			payload:    make(chan *ServerPayload, 10),
-		})
-		go c.writerToApp(i)
+		fs[i] = FileDescriptor{0, f}
+		c.responses[i] = newFileResponse(uint16(i))
+		go c.responses[i].write(c.done)
 	}
 
-	c.smd = make(chan *ServerMetaData, len(fs))
-	c.payload = make(chan *ServerPayload, 1024*len(fs))
-	c.ackNum = make(chan uint8, 256)
-	c.timeoutCanceler = make(chan struct{}, 1)
-	c.rtt = 1 * time.Second // TODO: set better initial timeout value
-	c.timeout = time.NewTimer(6 * c.rtt)
+	c.Conn.handle(msgServerMetadata, handlerFunc(c.handleMetadata))
+	c.Conn.handle(msgServerPayload, handlerFunc(c.handleServerPayload))
+	c.Conn.handle(msgClose, handlerFunc(c.handleClose))
 
-	c.Conn.handle(msgServerMetadata, c.ackNumHandler(handlerFunc(c.handleMetadata)))
-	c.Conn.handle(msgServerPayload, c.ackNumHandler(handlerFunc(c.handleServerPayload)))
-	c.Conn.handle(msgClose, c.ackNumHandler(handlerFunc(c.handleClose)))
-
-	if err := c.Conn.connectTo(host); err != nil {
-		return nil, err
-	}
-	if err := c.Conn.send(ClientRequest{
-		maxTransmissionRate: 0,
-		files:               fs,
-	}); err != nil {
+	if err := c.sendRequest(host, fs); err != nil {
 		return nil, err
 	}
 
-	go c.bufferResults()
-	go c.Conn.receive()
-	go c.sendAcks()
-	go c.timeoutConnection()
+	return c.responses, nil
+}
 
-	var errStrings []string
-	for smd := range c.smd {
-		i := smd.fileIndex
+func (c *Client) sendRequest(host string, fs []FileDescriptor) error {
+	for i := 1; i <= 10; i++ {
+		if err := c.Conn.connectTo(host); err != nil {
+			return err
+		}
+		c.start = time.Now()
+		if err := c.Conn.send(ClientRequest{
+			maxTransmissionRate: 0,
+			files:               fs,
+		}); err != nil {
+			return err
+		}
 
-		c.results[i].lock.Lock()
-
-		if smd.status != 0 {
-			err := fmt.Errorf("error receiving file: %v", smd.status)
-			errStrings = append(errStrings, err.Error())
-			c.results[i].err = err
-			c.results[i].done = true
-			close(c.results[i].payload)
+		go func() {
+			err := c.Conn.receive()
+			if err != nil {
+				log.Println("receive crashed with err")
+				c.err <- struct{}{}
+			}
+		}()
+		if err := c.waitForFirstResponse(i); err != nil {
+			log.Printf("err: %v, try again\n", err)
+			c.Conn.cclose(0 * time.Second)
 			continue
 		}
 
-		c.results[i].size = smd.size
-		c.results[i].checksum = smd.checkSum
-
-		c.results[i].lock.Unlock()
+		go c.sendAcks(c.Conn)
+		go c.waitForCloseConnection()
+		return nil
 	}
 
-	defer func() {
-		go c.closeConnection()
-	}()
-
-	if len(errStrings) > 0 {
-		return c.results, fmt.Errorf(strings.Join(errStrings, ", "))
-	}
-	return c.results, nil
+	return fmt.Errorf("request timed out %v times, aborting", 10)
 }
 
-func (c *Client) ackNumHandler(hf handlerFunc) handlerFunc {
-	return func(w io.Writer, p *packet) {
-		c.ackNum <- p.ackNum
-		c.timeoutCanceler <- struct{}{}
-		rtt := c.getRTT()
-		c.timeout = time.NewTimer(6 * rtt)
-		go c.timeoutConnection()
-		hf(w, p)
-	}
-}
+func (c *Client) waitForCloseConnection() {
+	done := 0
+	for {
+		select {
+		case <-c.done:
+			done++
+			if done == len(c.responses) {
+				c.closeConnection()
+			}
 
-func (c *Client) timeoutConnection() {
-	select {
-	case <-c.timeout.C:
-		c.closeConnection()
-	case <-c.timeoutCanceler:
-		return
+		case <-c.closeMsg:
+		case <-c.err:
+			c.closeConnection()
+		}
 	}
 }
 
 func (c *Client) closeConnection() {
-	c.timeoutCanceler <- struct{}{}
-	c.Conn.cclose(time.NewTimer(10 * time.Second))
-	close(c.payload)
-	//close(c.smd)
-	log.Println("closing client")
+	c.stopAck <- struct{}{}
+	for _, r := range c.responses {
+		log.Printf("send abort to file writer: %v\n", r.index)
+		r.cc <- struct{}{}
+	}
+	c.Conn.cclose(1 * time.Second)
 }
 
-func (c *Client) getRTT() time.Duration {
-	c.rttLock.Lock()
-	defer c.rttLock.Unlock()
-	return c.rtt
+func (c *Client) waitForFirstResponse(try int) error {
+	exp := math.Pow(2, float64(try))
+	timeoutTime := time.Duration(exp) * time.Second // TODO Set initial timeout with expo backoff
+	timeout := time.NewTimer(timeoutTime)
+	select {
+	case <-timeout.C:
+		return fmt.Errorf("%v. try timed out after %v", try, timeoutTime)
+	case <-c.ack:
+		c.rtt = time.Since(c.start)
+		return nil
+	}
 }
 
-func (c *Client) setRTT(rtt time.Duration) {
-	c.rttLock.Lock()
-	defer c.rttLock.Unlock()
-	c.rtt = rtt
-}
+func (c *Client) sendAcks(conn connection) {
+	maxFile := uint16(0)
+	maxOff := uint64(0)
 
-func (c *Client) sendAcks() {
-
-	nextAckNumber := uint8(1) // need to start with 1, to be able to distinguish between server header with no ACK number and our first ACK number
-
+	timeout := time.NewTimer(c.rtt)
 	ackSendMap := map[uint8]time.Time{}
-	rttMap := map[uint8]time.Duration{}
+	nextAckNum := uint8(1)
+	lastPing := time.Now()
 
-	timeout := time.NewTimer(200 * time.Millisecond) // TODO: use better timeout before first acknum is received
 	for {
 		select {
-		case an, more := <-c.ackNum:
-			if !more {
-				log.Println("closing ack sender")
-				return
-			}
-			if an <= 0 {
-				continue
-			}
-			rttMap[an] = time.Since(ackSendMap[an])
-			c.rtt = time.Since(ackSendMap[an])
-			log.Printf("received acknum echo: acknum: %v, time.Since = %v\n", an, c.rtt)
-
 		case <-timeout.C:
-			res, fi, off := c.getAckData()
-
+			if time.Since(lastPing) > 1*time.Second+3*c.rtt {
+				log.Println("connection timed out")
+				c.err <- struct{}{}
+			}
+			res := []*ResendEntry{}
+			for _, r := range c.responses {
+				fres := r.getResendEntries()
+				if fres != nil {
+					res = append(res, r.getResendEntries()...)
+				}
+			}
 			ack := ClientAck{
-				ackNumber:           nextAckNumber,
+				ackNumber:           nextAckNum,
 				maxTransmissionRate: 0,
-				fileIndex:           fi,
-				offset:              off,
+				fileIndex:           maxFile,
+				offset:              maxOff,
 				resendEntries:       res,
 			}
-			log.Printf("sending ack: num: %v, off: %v, res: %v\n", ack.ackNumber, ack.offset, ack.resendEntries)
+			ackSendMap[nextAckNum] = time.Now()
+			log.Printf("sending ack: %v\n", ack)
 			c.Conn.send(ack)
 
-			log.Printf("set ack timer to: %v\n", c.rtt)
+			nextAckNum = (nextAckNum + 1) % 255
+			// avoid 0 as it can't be distinguished from not set
+			if nextAckNum == 0 {
+				nextAckNum++
+			}
 			timeout = time.NewTimer(c.rtt)
-		}
-	}
-}
 
-func (c *Client) getAckData() (res []*ResendEntry, fi uint16, off uint64) {
-	for i := 0; i < len(c.results); i++ {
-		c.results[i].lock.Lock()
-		if c.results[i].offset > 0 {
-			fi = uint16(i)
-			off = c.results[i].offset
-			res = append(res, c.results[i].getResendEntries()...)
-		}
-		c.results[i].lock.Unlock()
-	}
-	return
-}
-
-func avg(ackTimes map[uint8]time.Duration) time.Duration {
-	if len(ackTimes) <= 0 {
-		return time.Duration(0)
-	}
-	log.Printf("averaging map: %v\n", ackTimes)
-	avg := 0
-
-	for _, v := range ackTimes {
-		avg += int(v)
-	}
-
-	avgFl := float64(avg) / float64(len(ackTimes))
-
-	log.Printf("result float: %v\n", avgFl)
-	d := time.Duration(math.Floor(avgFl))
-	log.Printf("result duration: %v\n", d)
-	return d
-}
-
-func (c *Client) writerToApp(fi int) {
-	for p := range c.results[fi].payload {
-		log.Printf("writing to app at offset: %v\n", p.offset)
-		_, err := c.results[fi].pipeWriter.Write(p.data)
-		// TODO: Finish up result, set done to true?
-		if err != nil {
-			// TODO: notify client?
-		}
-	}
-	err := c.results[fi].pipeWriter.Close()
-	log.Printf("Closing app writer with err: %v\n", err)
-}
-
-func (c *Client) bufferResults() {
-	for p := range c.payload {
-		log.Printf("received payload to buffer: %v\n", p.offset)
-		i := p.fileIndex
-		c.ackNum <- p.ackNumber
-
-		c.results[i].lock.Lock()
-		c.results[i].offset = p.offset
-		if p.offset != c.results[i].pointer {
-			heap.Push(c.results[i].buffer, p)
-			c.results[i].lock.Unlock()
-			continue
-		}
-
-		c.results[i].pointer++
-
-		c.results[i].lock.Unlock()
-
-		c.results[i].payload <- p
-
-		c.results[i].lock.Lock()
-
-		if c.results[i].buffer.Len() > 0 {
-			top := c.results[i].buffer.Top()
-			log.Printf("buffer top: %v\n", top)
-			for top == c.results[i].pointer {
-				p := heap.Pop(c.results[i].buffer).(*ServerPayload)
-				c.results[i].pointer++
-
-				c.results[i].lock.Unlock()
-				c.results[i].payload <- p
-				c.results[i].lock.Lock()
+		case ad := <-c.ack:
+			if ad.fi > maxFile {
+				maxFile = ad.fi
+				maxOff = ad.off
 			}
-		}
-
-		c.results[i].lock.Unlock()
-	}
-	for i := 0; i < len(c.results); i++ {
-		c.results[i].lock.Lock()
-		if !c.results[i].done {
-			c.results[i].done = true
-
-			for c.results[i].buffer.Len() > 0 {
-				p := heap.Pop(c.results[i].buffer).(*ServerPayload)
-				if c.results[i].pointer != p.offset {
-					log.Printf("Warning, possible packet loss: writing payload with offset %v at offset %v", p.offset, c.results[i].pointer)
-				}
-				c.results[i].payload <- p
-				c.results[i].pointer++
+			if ad.fi == maxFile && ad.off > maxOff {
+				maxOff = ad.off
 			}
+			if send, ok := ackSendMap[ad.num]; ok {
+				c.rtt = time.Since(send)
+			}
+			lastPing = time.Now()
 
-			close(c.results[i].payload)
+		case <-c.stopAck:
+			log.Println("leaving ack writer")
+			return
 		}
-		c.results[i].lock.Unlock()
 	}
-	close(c.ackNum)
+}
+
+type ackData struct {
+	num uint8
+	fi  uint16
+	off uint64
 }
 
 func (c *Client) handleMetadata(_ io.Writer, p *packet) {
@@ -326,9 +208,11 @@ func (c *Client) handleMetadata(_ io.Writer, p *packet) {
 		// TODO: what now? Rerequest metadata.
 		// Maybe log something or cancel the whole thing?
 	}
-	c.smd <- &smd
-	// TODO: Decide when to actually close smdChan
-	close(c.smd)
+	c.ack <- ackData{
+		num: p.ackNum,
+	}
+	log.Printf("handling metadata for file %v\n", smd.fileIndex)
+	c.responses[smd.fileIndex].mc <- &smd
 }
 
 func (c *Client) handleServerPayload(_ io.Writer, p *packet) {
@@ -338,7 +222,13 @@ func (c *Client) handleServerPayload(_ io.Writer, p *packet) {
 		// TODO: what now? Rerequest payload
 		// Maybe log something or cancel the whole thing?
 	}
-	c.payload <- &pl
+	c.ack <- ackData{
+		num: p.ackNum,
+		fi:  pl.fileIndex,
+		off: pl.offset,
+	}
+	log.Printf("handling payload %v for file %v\n", pl.offset, pl.fileIndex)
+	c.responses[pl.fileIndex].pc <- &pl
 }
 
 func (c *Client) handleClose(_ io.Writer, p *packet) {
@@ -347,4 +237,8 @@ func (c *Client) handleClose(_ io.Writer, p *packet) {
 	if err != nil {
 		// TODO: what now? Just drop everything?
 	}
+	c.ack <- ackData{
+		num: p.ackNum,
+	}
+	c.closeMsg <- struct{}{}
 }

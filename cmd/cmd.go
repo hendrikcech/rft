@@ -68,7 +68,8 @@ var rootCmd = &cobra.Command{
 		}
 
 		for _, r := range rs {
-			io.Copy(os.Stdout, &r)
+			io.Copy(os.Stdout, r)
+			log.Println("finish write")
 		}
 
 	},

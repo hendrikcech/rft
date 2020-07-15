@@ -33,7 +33,7 @@ type connection interface {
 	listen(host string) (func(), error)
 	connectTo(host string) error
 	send(msg encoding.BinaryMarshaler) error
-	cclose(*time.Timer) error
+	cclose(time.Duration) error
 	LossSim(LossSimulator)
 }
 
@@ -43,7 +43,8 @@ type udpConnection struct {
 	handlers   map[uint8]packetHandler
 	bufferSize int
 
-	closed chan struct{}
+	closed  chan struct{}
+	closing bool
 }
 
 type responseWriter func([]byte) (int, error)
@@ -65,7 +66,12 @@ func (c *udpConnection) handle(msgType uint8, h packetHandler) {
 	c.handlers[msgType] = h
 }
 
-func (c *udpConnection) cclose(timeout *time.Timer) error {
+func (c *udpConnection) cclose(deadline time.Duration) error {
+	timeout := time.NewTimer(deadline)
+	if c.closing {
+		return fmt.Errorf("connection already closed")
+	}
+	c.closing = true
 	err := c.socket.Close()
 	log.Printf("closed connection with err: %v\n", err)
 	select {
@@ -84,9 +90,16 @@ func (c *udpConnection) receive() error {
 		msg := make([]byte, c.bufferSize)
 		n, addr, err := c.socket.ReadFromUDP(msg)
 		if err != nil {
-			// TODO: check error and maybe stop listening and shutdown
+			if c.closing {
+				log.Println("finishing connection close")
+				wg.Wait()
+				c.closed <- struct{}{}
+				log.Println("finished connection close")
+				return nil
+			}
 			log.Printf("discarded packet due to error: %v", err)
-			break
+			log.Println("closing due to crashed connection")
+			return err
 		}
 
 		if c.lossSim.shouldDrop() {
@@ -115,12 +128,6 @@ func (c *udpConnection) receive() error {
 			c.handlers[header.msgType].handle(rw, p)
 		}()
 	}
-
-	log.Println("finishing connection close")
-	wg.Wait()
-	c.closed <- struct{}{}
-	log.Println("finished connection close")
-	return nil
 }
 
 func (c *udpConnection) listen(host string) (func(), error) {
@@ -264,7 +271,7 @@ func (c *testConnection) receive() error {
 		case msg := <-c.recvChan:
 			header := &MsgHeader{}
 			if err := header.UnmarshalBinary(msg); err != nil {
-				return fmt.Errorf("error while unmarshalling packet header: %v\n", err)
+				return fmt.Errorf("error while unmarshalling packet header: %v", err)
 			}
 
 			p := &packet{
@@ -275,7 +282,6 @@ func (c *testConnection) receive() error {
 			go c.handlers[header.msgType].handle(rw, p)
 		}
 	}
-	return nil
 }
 
 func (c *testConnection) listen(host string) (func(), error) {

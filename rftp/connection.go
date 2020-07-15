@@ -37,7 +37,7 @@ type connection interface {
 }
 
 type udpConnection struct {
-	lossSim    *LossSimulator
+	lossSim    LossSimulator
 	socket     *net.UDPConn
 	handlers   map[uint8]packetHandler
 	bufferSize int
@@ -51,7 +51,7 @@ func (rw responseWriter) Write(bs []byte) (int, error) {
 	return rw(bs)
 }
 
-func NewUdpConnection(lossSim *LossSimulator) *udpConnection {
+func NewUdpConnection(lossSim LossSimulator) *udpConnection {
 	return &udpConnection{
 		lossSim:    lossSim,
 		handlers:   make(map[uint8]packetHandler),

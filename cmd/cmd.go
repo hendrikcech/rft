@@ -40,7 +40,7 @@ var rootCmd = &cobra.Command{
 		}
 
 		rand.Seed(time.Now().UTC().UnixNano())
-		lossSim := rftp.NewLossSimulator(p, q)
+		lossSim := rftp.NewMarkovLossSimulator(p, q)
 		conn := rftp.NewUdpConnection(lossSim)
 
 		if s {

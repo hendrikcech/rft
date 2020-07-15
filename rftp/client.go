@@ -2,6 +2,7 @@ package rftp
 
 import (
 	"container/heap"
+	"encoding"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +12,16 @@ import (
 	"sync"
 	"time"
 )
+
+var defaultClient = Client{Conn: NewUDPConnection()}
+
+func Request(host string, files []string) ([]Result, error) {
+	return defaultClient.Request(host, files)
+}
+
+type Requester interface {
+	Request(string, encoding.BinaryMarshaler) (encoding.BinaryUnmarshaler, error)
+}
 
 type Result struct {
 	lock       sync.Mutex
@@ -38,7 +49,7 @@ func (r *Result) Read(p []byte) (n int, err error) {
 }
 
 type Client struct {
-	conn    connection
+	Conn    connection
 	results []Result
 	rttLock sync.Mutex
 	rtt     time.Duration
@@ -50,7 +61,7 @@ type Client struct {
 	timeoutCanceler chan struct{}
 }
 
-func (c *Client) Request(conn connection, host string, files []string) ([]Result, error) {
+func (c *Client) Request(host string, files []string) ([]Result, error) {
 	if len(files) > 65536 {
 		return nil, errors.New("too many files in request, use max. 65536 files per request")
 	}
@@ -67,7 +78,6 @@ func (c *Client) Request(conn connection, host string, files []string) ([]Result
 		go c.writerToApp(i)
 	}
 
-	c.conn = conn
 	c.smd = make(chan *ServerMetaData, len(fs))
 	c.payload = make(chan *ServerPayload, 1024*len(fs))
 	c.ackNum = make(chan uint8, 256)
@@ -75,14 +85,14 @@ func (c *Client) Request(conn connection, host string, files []string) ([]Result
 	c.rtt = 1 * time.Second // TODO: set better initial timeout value
 	c.timeout = time.NewTimer(6 * c.rtt)
 
-	conn.handle(msgServerMetadata, c.ackNumHandler(handlerFunc(c.handleMetadata)))
-	conn.handle(msgServerPayload, c.ackNumHandler(handlerFunc(c.handleServerPayload)))
-	conn.handle(msgClose, c.ackNumHandler(handlerFunc(c.handleClose)))
+	c.Conn.handle(msgServerMetadata, c.ackNumHandler(handlerFunc(c.handleMetadata)))
+	c.Conn.handle(msgServerPayload, c.ackNumHandler(handlerFunc(c.handleServerPayload)))
+	c.Conn.handle(msgClose, c.ackNumHandler(handlerFunc(c.handleClose)))
 
-	if err := conn.connectTo(host); err != nil {
+	if err := c.Conn.connectTo(host); err != nil {
 		return nil, err
 	}
-	if err := conn.send(ClientRequest{
+	if err := c.Conn.send(ClientRequest{
 		maxTransmissionRate: 0,
 		files:               fs,
 	}); err != nil {
@@ -90,8 +100,8 @@ func (c *Client) Request(conn connection, host string, files []string) ([]Result
 	}
 
 	go c.bufferResults()
-	go conn.receive()
-	go c.sendAcks(conn)
+	go c.Conn.receive()
+	go c.sendAcks()
 	go c.timeoutConnection()
 
 	var errStrings []string
@@ -147,7 +157,7 @@ func (c *Client) timeoutConnection() {
 
 func (c *Client) closeConnection() {
 	c.timeoutCanceler <- struct{}{}
-	c.conn.cclose(time.NewTimer(10 * time.Second))
+	c.Conn.cclose(time.NewTimer(10 * time.Second))
 	close(c.payload)
 	//close(c.smd)
 	log.Println("closing client")
@@ -165,7 +175,7 @@ func (c *Client) setRTT(rtt time.Duration) {
 	c.rtt = rtt
 }
 
-func (c *Client) sendAcks(conn connection) {
+func (c *Client) sendAcks() {
 
 	nextAckNumber := uint8(1) // need to start with 1, to be able to distinguish between server header with no ACK number and our first ACK number
 
@@ -198,7 +208,7 @@ func (c *Client) sendAcks(conn connection) {
 				resendEntries:       res,
 			}
 			log.Printf("sending ack: num: %v, off: %v, res: %v\n", ack.ackNumber, ack.offset, ack.resendEntries)
-			conn.send(ack)
+			c.Conn.send(ack)
 
 			log.Printf("set ack timer to: %v\n", c.rtt)
 			timeout = time.NewTimer(c.rtt)

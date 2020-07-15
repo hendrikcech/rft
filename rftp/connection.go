@@ -34,6 +34,7 @@ type connection interface {
 	connectTo(host string) error
 	send(msg encoding.BinaryMarshaler) error
 	cclose(*time.Timer) error
+	LossSim(LossSimulator)
 }
 
 type udpConnection struct {
@@ -51,9 +52,9 @@ func (rw responseWriter) Write(bs []byte) (int, error) {
 	return rw(bs)
 }
 
-func NewUDPConnection(lossSim LossSimulator) *udpConnection {
+func NewUDPConnection() *udpConnection {
 	return &udpConnection{
-		lossSim:    lossSim,
+		lossSim:    &NoopLossSimulator{},
 		handlers:   make(map[uint8]packetHandler),
 		bufferSize: 2048,
 		closed:     make(chan struct{}),
@@ -159,6 +160,10 @@ func (c *udpConnection) connectTo(host string) error {
 
 func (c udpConnection) send(msg encoding.BinaryMarshaler) error {
 	return sendTo(c.socket, msg)
+}
+
+func (c *udpConnection) LossSim(lossSim LossSimulator) {
+	c.lossSim = lossSim
 }
 
 func sendTo(writer io.Writer, msg encoding.BinaryMarshaler) error {
@@ -290,4 +295,7 @@ func (c testConnection) send(msg encoding.BinaryMarshaler) error {
 
 func (c testConnection) cclose(timeout *time.Timer) error {
 	return nil
+}
+
+func (c testConnection) LossSim(lossSim LossSimulator) {
 }

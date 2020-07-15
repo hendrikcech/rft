@@ -21,32 +21,32 @@ type Lister interface {
 type Server struct {
 	SRC     Lister
 	connMgr *connManager
-	conn    connection
+	Conn    connection
 }
 
-func NewServer(l Lister, conn connection) *Server {
+func NewServer(l Lister) *Server {
 	s := &Server{
 		SRC: l,
 		connMgr: &connManager{
 			conns: make(map[string]*clientConnection),
 		},
-		conn: conn,
+		Conn: NewUDPConnection(),
 	}
 
-	s.conn.handle(msgClientRequest, handlerFunc(s.handleRequest))
-	s.conn.handle(msgClientAck, handlerFunc(s.handleACK))
-	s.conn.handle(msgClose, handlerFunc(s.handleClose))
+	s.Conn.handle(msgClientRequest, handlerFunc(s.handleRequest))
+	s.Conn.handle(msgClientAck, handlerFunc(s.handleACK))
+	s.Conn.handle(msgClose, handlerFunc(s.handleClose))
 
 	return s
 }
 
 func (s *Server) Listen(host string) error {
-	cancel, err := s.conn.listen(host)
+	cancel, err := s.Conn.listen(host)
 	if err != nil {
 		return err
 	}
 	defer cancel()
-	return s.conn.receive()
+	return s.Conn.receive()
 }
 
 func (s *Server) handleRequest(w io.Writer, p *packet) {

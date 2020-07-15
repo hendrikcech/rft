@@ -41,7 +41,7 @@ var rootCmd = &cobra.Command{
 
 		rand.Seed(time.Now().UTC().UnixNano())
 		lossSim := rftp.NewMarkovLossSimulator(p, q)
-		conn := rftp.NewUdpConnection(lossSim)
+		conn := rftp.NewUDPConnection(lossSim)
 
 		if s {
 			log.Printf("running server on host '%v' and dir %v\n", host, files[0])

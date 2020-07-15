@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"strings"
 )
 
 const (
@@ -16,6 +17,27 @@ const (
 	msgClientAck
 	msgClose
 )
+
+type MetaDataStatus uint8
+
+const (
+	noErr MetaDataStatus = iota
+	fileNotExistent
+	fileEmpty
+	accessDenied
+)
+
+func (m MetaDataStatus) String() string {
+	switch uint8(m) {
+	case 1:
+		return "1: file does not exist"
+	case 2:
+		return "2: file is empty"
+	case 3:
+		return "3: access denied"
+	}
+	return "0: no error"
+}
 
 type option struct {
 	otype  uint8
@@ -143,16 +165,13 @@ func (s *ClientRequest) UnmarshalBinary(data []byte) error {
 		return nil
 	}
 
-	log.Printf("extract %v file(s)\n", numFiles)
 	s.files = make([]FileDescriptor, numFiles)
 
 	dataLens := data[6:]
 	for i := uint16(0); i < numFiles; i++ {
 		f := FileDescriptor{}
 		f.offset = uintOffset(dataLens[:7])
-		log.Printf("offset: %v\n", f.offset)
 		pathLen := binary.BigEndian.Uint16(dataLens[7:9])
-		log.Printf("path len: %v\n", pathLen)
 		f.fileName = string(dataLens[9 : 9+pathLen])
 		dataLens = dataLens[9+pathLen:]
 		s.files[i] = f
@@ -162,21 +181,8 @@ func (s *ClientRequest) UnmarshalBinary(data []byte) error {
 	return nil
 }
 
-type MetaDataStatus uint8
-
-func (m MetaDataStatus) String() string {
-	switch uint8(m) {
-	case 1:
-		return "1: file does not exist"
-	case 2:
-		return "2: file is empty"
-	case 3:
-		return "3: access denied"
-	}
-	return "0: no error"
-}
-
 type ServerMetaData struct {
+	ackNum    uint8
 	status    MetaDataStatus
 	fileIndex uint16
 	size      uint64
@@ -282,6 +288,22 @@ type ClientAck struct {
 	resendEntries       []*ResendEntry
 }
 
+func (c *ClientAck) String() string {
+	res := []string{}
+	for _, re := range c.resendEntries {
+		res = append(res, re.String())
+	}
+	return fmt.Sprintf(
+		"{%v %v %v %v %v %v}",
+		c.ackNumber,
+		c.fileIndex,
+		c.status,
+		c.maxTransmissionRate,
+		c.offset,
+		fmt.Sprintf("[%v]", strings.Join(res, " ")),
+	)
+}
+
 // make offset BigEndian and cut off the first (most significant) byte
 func sevenByteOffset(offset uint64) ([]byte, error) {
 	offsetBuffer := new(bytes.Buffer)
@@ -328,7 +350,7 @@ func (c ClientAck) MarshalBinary() ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		sb, err = sevenByteOffset(c.offset)
+		sb, err = sevenByteOffset(re.offset)
 		if err != nil {
 			return nil, err
 		}

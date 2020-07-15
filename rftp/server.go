@@ -1,3 +1,5 @@
+// +build !s2
+
 package rftp
 
 import (

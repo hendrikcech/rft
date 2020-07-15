@@ -2,6 +2,7 @@ package rftp
 
 import (
 	"encoding"
+	"log"
 	"reflect"
 	"testing"
 )
@@ -24,14 +25,14 @@ func TestMsgHeaderMarshalling(t *testing.T) {
 			msgType:   0,
 			optionLen: 0,
 
-			hdrLen: 2,
+			hdrLen: 3,
 		},
 		"version1": {
 			version:   1,
 			msgType:   0,
 			optionLen: 0,
 
-			hdrLen: 2,
+			hdrLen: 3,
 		},
 	}
 
@@ -76,9 +77,9 @@ func TestFileRequestMarshalling(t *testing.T) {
 	copy(csa[:], cs[:16])
 	tests := map[string]ServerMetaData{
 		"empty":             {},
-		"zero":              {0, 0, 0, [16]byte{}},
-		"non-zero-uints":    {1, 2, 3, [16]byte{}},
-		"non-zero-checksum": {1, 2, 3, csa},
+		"zero":              {0, 0, 0, 0, [16]byte{}},
+		"non-zero-uints":    {0, 1, 2, 3, [16]byte{}},
+		"non-zero-checksum": {0, 1, 2, 3, csa},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -106,8 +107,9 @@ func TestDataMarshalling(t *testing.T) {
 
 func TestAcknowledgementMarshalling(t *testing.T) {
 	tests := map[string]ClientAck{
-		"no-missing": {0, 0, 0, 0, 0, nil},
-		"missing":    {0, 0, 0, 0, 0, []*ResendEntry{{0, 1, 2}}},
+		"no-missing":   {0, 0, 0, 0, 0, nil},
+		"resend-entry": {0, 0, 0, 0, 0, []*ResendEntry{{0, 1, 2}}},
+		"offset-2":     {0, 0, 0, 0, 2, []*ResendEntry{{0, 1, 2}}},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -119,6 +121,7 @@ func TestAcknowledgementMarshalling(t *testing.T) {
 
 func testConversion(t *testing.T, a UnMarshalBinary, b UnMarshalBinary) {
 	bin, err := a.MarshalBinary()
+	log.Printf("%v\n", bin)
 	checkErr(t, err)
 
 	err = b.UnmarshalBinary(bin)

@@ -5,7 +5,17 @@ import (
 	"math/rand"
 )
 
-type LossSimulator struct {
+type LossSimulator interface {
+	shouldDrop() bool
+}
+
+type NoopLossSimulator struct{}
+
+func (l *NoopLossSimulator) shouldDrop() bool {
+	return false
+}
+
+type MarkovLossSimulator struct {
 	p         float32
 	q         float32
 	lossState bool
@@ -13,19 +23,19 @@ type LossSimulator struct {
 
 // Return a new loss simulator. p and q between 0 and 1.
 // Caller should consider seeding global randomness source.
-func NewLossSimulator(p float32, q float32) *LossSimulator {
+func NewMarkovLossSimulator(p float32, q float32) LossSimulator {
 	if p < 0 || q < 0 || p > 1 || q > 1 {
 		log.Panic("The loss simulation parameters must be between 0 and 1")
 	}
 
-	return &LossSimulator{
+	return &MarkovLossSimulator{
 		p:         p,
 		q:         q,
 		lossState: false,
 	}
 }
 
-func (l *LossSimulator) shouldDrop() bool {
+func (l *MarkovLossSimulator) shouldDrop() bool {
 	x := rand.Float32() // upper bound is exclusive, i.e., never 1; problem?
 	if l.lossState {
 		if x >= 1-l.q {

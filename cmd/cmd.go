@@ -34,18 +34,16 @@ var rootCmd = &cobra.Command{
 			p = q
 		} else if p != -1 && q == -1 {
 			q = p
-		} else if p == -1 && q == -1 {
-			p = 0
-			q = 0
 		}
-
-		rand.Seed(time.Now().UTC().UnixNano())
-		lossSim := rftp.NewMarkovLossSimulator(p, q)
-		conn := rftp.NewUDPConnection(lossSim)
 
 		if s {
 			log.Printf("running server on host '%v' and dir %v\n", host, files[0])
-			server := rftp.NewServer(rftp.DirectoryLister(files[0]), conn)
+			server := rftp.NewServer(rftp.DirectoryLister(files[0]))
+			if p != -1 || q != -1 {
+				lossSim := rftp.NewMarkovLossSimulator(p, q)
+				server.Conn.LossSim(lossSim)
+				rand.Seed(time.Now().UTC().UnixNano())
+			}
 			server.Listen(fmt.Sprintf(":%v", t))
 			return
 		}
@@ -53,8 +51,18 @@ var rootCmd = &cobra.Command{
 		hs := fmt.Sprintf("%v:%v", host, t)
 		log.Printf("running client request to host '%v' for files %v\n", hs, files)
 
-		client := rftp.Client{}
-		rs, err := client.Request(conn, hs, files)
+		var client rftp.Client
+		if p != -1 || q != -1 {
+			lossSim := rftp.NewMarkovLossSimulator(p, q)
+			conn := rftp.NewUDPConnection()
+			conn.LossSim(lossSim)
+			client = rftp.Client{Conn: conn}
+			rand.Seed(time.Now().UTC().UnixNano())
+		} else {
+			client = rftp.Client{Conn: rftp.NewUDPConnection()}
+		}
+
+		rs, err := client.Request(hs, files)
 		if err != nil {
 			log.Printf("error on request: %v\n", err)
 		}

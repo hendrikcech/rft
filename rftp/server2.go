@@ -37,7 +37,13 @@ type clientConnection struct {
 func (c *clientConnection) writeResponse() {
 	log.Println("start writing response packets")
 	lastAck := uint8(0)
+	rateControl := &aimd{congRate: 4}
+	rateControl.start()
+	defer rateControl.stop()
 	for {
+		// TODO: Wait for rateControl.available() to be true. How should the caller
+		// of rateControl be informed? ACKs should be handled even if
+		// !rateControl.available().
 		var err error
 
 		select {
@@ -46,15 +52,22 @@ func (c *clientConnection) writeResponse() {
 			md.ackNum = lastAck
 			c.metadataCache[md.fileIndex] = md
 			err = sendTo(c.socket, *md)
+			if err != nil {
+				rateControl.onSend()
+			}
 
 		case pl := <-c.payload:
 			log.Printf("sending payload for file %v at offset %v\n", pl.fileIndex, pl.offset)
 			pl.ackNumber = lastAck
 			c.saveToCache(pl)
 			err = sendTo(c.socket, *pl)
+			if err != nil {
+				rateControl.onSend()
+			}
 
 		case ack := <-c.ack:
 			lastAck = ack.ackNumber
+			rateControl.onACK(ack)
 			c.reschedule(ack)
 		}
 

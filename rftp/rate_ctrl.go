@@ -12,7 +12,10 @@ type RateControl interface {
 
 	// Returns true if both congestion and flow control allow sending one packet
 	// at this moment.
-	available() bool
+	isAvailable() bool
+
+	// Element added each time the awaitAvailable rate changes.
+	awaitAvailable() <-chan struct{}
 
 	// Must be called with a newly received client acknowledgment.
 	onAck(*ClientAck)
@@ -35,7 +38,8 @@ type aimd struct {
 	lastAck               uint8
 	decreaseCoolOffPeriod uint8
 
-	resetTicker *time.Ticker
+	resetTicker   *time.Ticker
+	availableChan chan struct{}
 }
 
 func (c *aimd) start() {
@@ -43,20 +47,36 @@ func (c *aimd) start() {
 	go func() {
 		for {
 			atomic.StoreUint32(&c.sent, 0)
+			c.notifyAvailable()
 			_, ok := <-c.resetTicker.C
 			if !ok {
 				break
 			}
 		}
 	}()
+
+	c.availableChan = make(chan struct{}, 1)
 }
 
 func (c *aimd) stop() {
 	c.resetTicker.Stop()
 }
 
-// Must be
-func (c *aimd) available() bool {
+func (c *aimd) awaitAvailable() <-chan struct{} {
+	return c.availableChan
+}
+
+func (c *aimd) notifyAvailable() {
+	// If last notification (value of c.availableChan) has not been read, a write
+	// would block.
+	if len(c.availableChan) < cap(c.availableChan) {
+		c.availableChan <- struct{}{}
+	}
+}
+
+// Returns true if both congestion and flow control allow sending one packet
+// at this moment.
+func (c *aimd) isAvailable() bool {
 	sent := atomic.LoadUint32(&c.sent)
 	return sent < c.congRate && sent < c.flowRate
 }
@@ -80,15 +100,15 @@ func (c *aimd) onACK(ack *ClientAck) {
 
 	if len(ack.resendEntries) == 0 {
 		c.congRate++
-		return
+	} else if c.decreaseCoolOffPeriod == 0 {
+		c.congRate /= 2
+		c.decreaseCoolOffPeriod = aimdDecreaseCoolOffPeriod
 	}
 
-	if c.decreaseCoolOffPeriod < aimdDecreaseCoolOffPeriod {
-		return
+	c.lastAck = ack.ackNumber
+	if c.isAvailable() {
+		c.notifyAvailable()
 	}
-
-	c.congRate /= 2
-	c.decreaseCoolOffPeriod = aimdDecreaseCoolOffPeriod
 }
 
 func (c *aimd) onSend() {

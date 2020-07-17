@@ -40,35 +40,48 @@ func (c *clientConnection) writeResponse() {
 	rateControl := &aimd{congRate: 4}
 	rateControl.start()
 	defer rateControl.stop()
+
 	for {
-		// TODO: Wait for rateControl.available() to be true. How should the caller
-		// of rateControl be informed? ACKs should be handled even if
-		// !rateControl.available().
 		var err error
 
-		select {
-		case md := <-c.metadata:
-			log.Printf("sending metadata for file %v: status: %v, size: %v, checksum: %x\n", md.fileIndex, md.status, md.size, md.checkSum)
-			md.ackNum = lastAck
-			c.metadataCache[md.fileIndex] = md
-			err = sendTo(c.socket, *md)
-			if err != nil {
+		if rateControl.isAvailable() {
+			select {
+			case md := <-c.metadata:
+				log.Printf(
+					"sending metadata for file %v: status: %v, size: %v, checksum: %x\n",
+					md.fileIndex,
+					md.status,
+					md.size,
+					md.checkSum,
+				)
+				md.ackNum = lastAck
+				c.metadataCache[md.fileIndex] = md
+				err = sendTo(c.socket, *md)
 				rateControl.onSend()
-			}
 
-		case pl := <-c.payload:
-			log.Printf("sending payload for file %v at offset %v\n", pl.fileIndex, pl.offset)
-			pl.ackNumber = lastAck
-			c.saveToCache(pl)
-			err = sendTo(c.socket, *pl)
-			if err != nil {
+			case pl := <-c.payload:
+				log.Printf("sending payload for file %v at offset %v\n", pl.fileIndex, pl.offset)
+				pl.ackNumber = lastAck
+				c.saveToCache(pl)
+				err = sendTo(c.socket, *pl)
 				rateControl.onSend()
-			}
 
-		case ack := <-c.ack:
-			lastAck = ack.ackNumber
-			rateControl.onACK(ack)
-			c.reschedule(ack)
+			case ack := <-c.ack:
+				// TODO: duplicate ACK block
+				lastAck = ack.ackNumber
+				rateControl.onACK(ack)
+				c.reschedule(ack)
+			}
+		} else {
+			select {
+			case <-rateControl.awaitAvailable():
+				continue
+			case ack := <-c.ack:
+				// TODO: duplicate ACK block
+				lastAck = ack.ackNumber
+				rateControl.onACK(ack)
+				c.reschedule(ack)
+			}
 		}
 
 		if err != nil {

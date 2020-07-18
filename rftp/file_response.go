@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log"
+	"sort"
 	"sync"
 )
 
@@ -15,12 +16,13 @@ type FileResponse struct {
 	pc chan *ServerPayload
 	cc chan struct{}
 
-	preader  *io.PipeReader
-	pwriter  *io.PipeWriter
-	buffer   *chunkQueue
-	head     uint64
-	metadata bool
-	lock     sync.Mutex
+	preader       *io.PipeReader
+	pwriter       *io.PipeWriter
+	buffer        *chunkQueue
+	resendEntries map[uint64]struct{}
+	head          uint64
+	metadata      bool
+	lock          sync.Mutex
 
 	size     uint64
 	chunks   uint64
@@ -38,9 +40,10 @@ func newFileResponse(index uint16) *FileResponse {
 		pc: make(chan *ServerPayload, 1024),
 		cc: make(chan struct{}),
 
-		preader: r,
-		pwriter: w,
-		buffer:  newChunkQueue(index),
+		preader:       r,
+		pwriter:       w,
+		buffer:        newChunkQueue(index),
+		resendEntries: make(map[uint64]struct{}),
 	}
 }
 
@@ -56,12 +59,30 @@ type resendData struct {
 	bufferSize int
 }
 
-func (f *FileResponse) getResendEntries() *resendData {
+func (f *FileResponse) getResendEntries(max int) *resendData {
 	f.lock.Lock()
 	defer f.lock.Unlock()
+	res := []*ResendEntry{}
+	// TODO: make sort faster? keep it sorted? Check loss of precision when
+	// converting uint64 to int?
+	entries := make([]int, len(f.resendEntries))
+	i := 0
+	for k := range f.resendEntries {
+		entries[i] = int(k)
+		i++
+	}
+	sort.Ints(entries)
+	for _, offset := range entries {
+		if len(res) > max {
+			break
+		}
+		res = append(res, &ResendEntry{
+			fileIndex: f.index,
+			offset:    uint64(offset),
+			length:    1,
+		})
+	}
 
-	// TODO: Make this call fast and threadsafe
-	res := f.buffer.Gaps(f.head)
 	if !f.metadata {
 		res = append(res, &ResendEntry{
 			fileIndex: f.index,
@@ -72,10 +93,9 @@ func (f *FileResponse) getResendEntries() *resendData {
 		res = append(res, &ResendEntry{
 			fileIndex: f.index,
 			offset:    f.head,
-			length:    uint8(f.chunks - f.head),
+			length:    1,
 		})
 	}
-	log.Printf("file response buffer queue.Len() = %v\n", f.buffer.Len())
 	return &resendData{
 		started:    (f.head > 0) || f.buffer.Len() > 0,
 		metadata:   f.metadata,
@@ -91,13 +111,13 @@ func (f *FileResponse) write(done chan<- uint16) {
 	for {
 		select {
 		case metadata := <-f.mc:
-			log.Println("fileresponse received metadata")
 			f.lock.Lock()
 			f.size = metadata.size
 			f.chunks = f.size / 1024
 			if f.size%1024 > 0 {
 				f.chunks++
 			}
+			log.Printf("fileresponse received metadata: size: %v\n", f.chunks)
 			f.checksum = metadata.checkSum
 			f.metadata = true
 			f.lock.Unlock()
@@ -106,9 +126,19 @@ func (f *FileResponse) write(done chan<- uint16) {
 			log.Printf("fileresponse received payload %v\n", payload.offset)
 			if payload.offset == f.head {
 				f.pwriter.Write(payload.data)
+				f.lock.Lock()
+				delete(f.resendEntries, f.head)
 				f.head++
+				f.lock.Unlock()
 			} else {
-				heap.Push(f.buffer, payload)
+				if payload.offset > f.head {
+					f.lock.Lock()
+					heap.Push(f.buffer, payload)
+					for i := f.head; i < payload.offset; i++ {
+						f.resendEntries[i] = struct{}{}
+					}
+					f.lock.Unlock()
+				}
 			}
 			f.drainBuffer()
 
@@ -121,7 +151,7 @@ func (f *FileResponse) write(done chan<- uint16) {
 		}
 
 		log.Printf("file %v at head %v and buffer size %v\n", f.index, f.head, f.buffer.Len())
-		if f.head == f.chunks && f.buffer.Len() == 0 {
+		if f.metadata && f.head >= f.chunks && f.buffer.Len() == 0 {
 			done <- f.index
 			f.pwriter.Close()
 			log.Println("done, leaving writer")
@@ -131,13 +161,17 @@ func (f *FileResponse) write(done chan<- uint16) {
 }
 
 func (f *FileResponse) drainBuffer() {
-	log.Println("draining buffer")
-	defer log.Println("drained buffer")
+	f.lock.Lock()
+	defer f.lock.Unlock()
 	top := f.buffer.Top()
-	for top == f.head {
+	log.Printf("buffer top: %v, head: %v\n", top, f.head)
+	for top <= f.head && f.buffer.Len() > 0 {
 		payload := heap.Pop(f.buffer).(*ServerPayload)
-		f.pwriter.Write(payload.data)
+		if top == f.head {
+			f.pwriter.Write(payload.data)
+			delete(f.resendEntries, f.head)
+			f.head++
+		}
 		top = f.buffer.Top()
-		f.head++
 	}
 }

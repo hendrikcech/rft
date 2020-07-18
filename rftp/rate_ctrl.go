@@ -37,6 +37,7 @@ type aimd struct {
 	flowRate              uint32
 	sent                  uint32
 	lastAck               uint8
+	lastResendEntries     int
 	decreaseCoolOffPeriod uint8
 
 	resetTicker         *time.Ticker
@@ -85,12 +86,17 @@ func (c *aimd) notifyAvailable() {
 // at this moment.
 func (c *aimd) isAvailable() bool {
 	sent := atomic.LoadUint32(&c.sent)
-	return sent < c.congRate && sent < c.flowRate
+	//log.Printf("isAvailable: sent: %v, c.congRate: %v, c.flowRate: %v\n", sent, c.congRate, c.flowRate)
+	if c.flowRate > 0 {
+		return sent < c.congRate && sent < c.flowRate
+	}
+	return sent < c.congRate
 }
 
 func (c *aimd) onAck(ack *ClientAck) {
 	if ack.ackNumber < c.lastAck {
 		// Should we make sure that out-of-order ACKs are handled earlier?
+		c.lastAck = ack.ackNumber
 		return
 	}
 
@@ -105,7 +111,7 @@ func (c *aimd) onAck(ack *ClientAck) {
 
 	c.flowRate = ack.maxTransmissionRate
 
-	if len(ack.resendEntries) == 0 {
+	if len(ack.resendEntries) <= c.lastResendEntries {
 		c.congRate++
 	} else if c.decreaseCoolOffPeriod == 0 {
 		c.congRate /= 2
@@ -113,6 +119,7 @@ func (c *aimd) onAck(ack *ClientAck) {
 	}
 
 	c.lastAck = ack.ackNumber
+	c.lastResendEntries = len(ack.resendEntries)
 	if c.isAvailable() {
 		c.notifyAvailable()
 	}

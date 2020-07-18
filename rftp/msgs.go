@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"sort"
 	"strings"
 )
 
@@ -275,6 +276,24 @@ type ResendEntry struct {
 	length    uint8
 }
 
+type ResendEntryList []*ResendEntry
+
+// Len is the number of elements in the collection.
+func (r *ResendEntryList) Len() int {
+	return len(*r)
+}
+
+// Less reports whether the element with
+// index i should sort before the element with index j.
+func (r *ResendEntryList) Less(i int, j int) bool {
+	return (*r)[i].offset < (*r)[j].offset
+}
+
+// Swap swaps the elements with indexes i and j.
+func (r *ResendEntryList) Swap(i int, j int) {
+	(*r)[i], (*r)[j] = (*r)[j], (*r)[i]
+}
+
 func (r *ResendEntry) String() string {
 	return fmt.Sprintf("%v", *r)
 }
@@ -285,11 +304,12 @@ type ClientAck struct {
 	status              uint8
 	maxTransmissionRate uint32
 	offset              uint64
-	resendEntries       []*ResendEntry
+	resendEntries       ResendEntryList
 }
 
 func (c *ClientAck) String() string {
 	res := []string{}
+	sort.Sort(&c.resendEntries)
 	for _, re := range c.resendEntries {
 		res = append(res, re.String())
 	}

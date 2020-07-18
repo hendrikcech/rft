@@ -144,7 +144,7 @@ func (c *Client) sendAcks(conn connection) {
 	for {
 		select {
 		case <-timeout.C:
-			if time.Since(lastPing) > 1*time.Second+2000*c.rtt {
+			if time.Since(lastPing) > 1*time.Second+10000*c.rtt {
 				log.Println("connection timed out")
 				c.err <- struct{}{}
 			}
@@ -154,8 +154,11 @@ func (c *Client) sendAcks(conn connection) {
 			maxTransmission := 1
 			res := []*ResendEntry{}
 			for i, r := range c.responses {
+				if len(res) > 3 {
+					break
+				}
 				index := uint16(i)
-				rd := r.getResendEntries()
+				rd := r.getResendEntries(140)
 				maxTransmission += rd.bufferSize
 				if rd.res != nil {
 					res = append(res, rd.res...)
@@ -180,15 +183,14 @@ func (c *Client) sendAcks(conn connection) {
 			log.Printf("sending ack: %v\n", ack.String())
 			c.Conn.send(ack)
 
-			nextAckNum = (nextAckNum + 1) % 255
+			nextAckNum++
 			// avoid 0 as it can't be distinguished from not set
 			if nextAckNum == 0 {
 				nextAckNum++
 			}
-			timeout = time.NewTimer(c.rtt)
+			timeout = time.NewTimer(time.Second)
 
 		case ackNum := <-c.ack:
-			log.Println("set last ping2")
 			if send, ok := ackSendMap[ackNum]; ok {
 				c.rtt = time.Since(send)
 			}

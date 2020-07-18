@@ -3,7 +3,6 @@ package rftp
 import (
 	"container/heap"
 	"fmt"
-	"sort"
 	"strings"
 )
 
@@ -48,41 +47,6 @@ func (c chunkQueue) Swap(i int, j int) {
 func (c *chunkQueue) Push(x interface{}) {
 	payload := x.(*ServerPayload)
 	c.items = append(c.items, payload)
-}
-
-func (c *chunkQueue) Gaps(from uint64) (res []*ResendEntry) {
-	sort.Sort(c)
-	defer heap.Init(c)
-	first := from
-	i := 0
-	for i < c.Len() {
-		length := c.items[i].offset - first
-		split := false
-		if length > 255 {
-			split = true
-			length = 255
-		}
-
-		re := &ResendEntry{
-			fileIndex: c.fileIndex,
-			offset:    first,
-			length:    uint8(length),
-		}
-		res = append(res, re)
-		first += length + 1
-
-		if !split {
-			i++
-			for i < c.Len()-1 {
-				if c.items[i].offset > first {
-					break
-				}
-				first++
-				i++
-			}
-		}
-	}
-	return
 }
 
 func (c *chunkQueue) Pop() interface{} {

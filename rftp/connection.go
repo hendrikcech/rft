@@ -103,6 +103,7 @@ func (c *udpConnection) receive() error {
 		}
 
 		if c.lossSim.shouldDrop() {
+			log.Printf("dropping packet")
 			continue
 		}
 
@@ -125,6 +126,7 @@ func (c *udpConnection) receive() error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			//time.Sleep(1 * time.Second)
 			c.handlers[header.msgType].handle(rw, p)
 		}()
 	}

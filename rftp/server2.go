@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"sort"
 	"sync"
 	"time"
 )
@@ -25,6 +26,7 @@ type clientConnection struct {
 	rtt        time.Duration
 	req        *ClientRequest
 	payload    chan *ServerPayload
+	resend     chan *ServerPayload
 	metadata   chan *ServerMetaData
 	ack        chan *ClientAck
 	reschedule chan *ClientAck
@@ -46,8 +48,23 @@ func (c *clientConnection) writeResponse() {
 		var err error
 
 		if rateControl.isAvailable() {
-			log.Println("rate budget available")
 
+			select {
+			case pl := <-c.resend:
+				log.Printf("resending payload for file %v at offset %v\n", pl.fileIndex, pl.offset)
+				pl.ackNumber = lastAck
+				err = sendTo(c.socket, *pl)
+				rateControl.onSend()
+				continue
+
+			case ack := <-c.ack:
+				// TODO: duplicate ACK block
+				lastAck = ack.ackNumber
+				rateControl.onACK(ack)
+				c.reschedule <- ack
+
+			default:
+			}
 			select {
 			case md := <-c.metadata:
 				log.Printf(
@@ -70,27 +87,21 @@ func (c *clientConnection) writeResponse() {
 				rateControl.onSend()
 
 			case ack := <-c.ack:
-				log.Printf("received ack: %v\n", ack)
 				// TODO: duplicate ACK block
 				lastAck = ack.ackNumber
 				rateControl.onACK(ack)
-				if ack.ackNumber%5 == 0 {
-					c.reschedule <- ack
-				}
+				c.reschedule <- ack
 			}
 		} else {
-			log.Println("no rate budget available")
 			select {
 			case <-rateControl.awaitAvailable():
 				continue
 			case ack := <-c.ack:
-				log.Printf("received ack: %v\n", ack)
+				//log.Printf("received ack: %v\n", ack)
 				// TODO: duplicate ACK block
 				lastAck = ack.ackNumber
 				rateControl.onACK(ack)
-				if ack.ackNumber%5 == 0 {
-					c.reschedule <- ack
-				}
+				c.reschedule <- ack
 			}
 		}
 
@@ -121,22 +132,38 @@ func (c *clientConnection) rescheduler() {
 			metadata[ack.fileIndex] = struct{}{}
 		}
 
+		sort.Sort(&ack.resendEntries)
+		log.Printf("rescheduling sorted ack: %v\n", ack)
 		for _, re := range ack.resendEntries {
 			if re.length == 0 {
 				metadata[re.fileIndex] = struct{}{}
 			}
 			if m, ok := c.payloadCache[re.fileIndex]; ok {
-				//				for i := uint64(0); i < uint64(re.length); i++ {
-				if p, ok := m[re.offset]; ok {
-					c.payload <- p
-					log.Printf("rescheduled payload for file: %v at offset: %v\n", p.fileIndex, p.offset)
-				} else {
-					log.Println("didn't find resend entry in cache")
-					// TODO:
-					// re-read from sectionReader, this isn't trivial either
-					// because we may have to avoid concurrent reads on the files
+				if re.length == 0 {
+					if p, ok := m[re.offset]; ok {
+						c.resend <- p
+						log.Printf("rescheduled payload for file: %v at offset: %v\n", p.fileIndex, p.offset)
+					} else {
+						log.Printf("didn't find resend entry in cache: %v\n", re.offset)
+						break
+						// TODO:
+						// re-read from sectionReader, this isn't trivial either
+						// because we may have to avoid concurrent reads on the files
+					}
 				}
-				//				}
+
+				for i := uint64(0); i < uint64(re.length); i++ {
+					if p, ok := m[re.offset+i]; ok {
+						c.resend <- p
+						log.Printf("rescheduled payload for file: %v at offset: %v\n", p.fileIndex, p.offset)
+					} else {
+						log.Printf("didn't find resend entry in cache: %v\n", re.offset+i)
+						break
+						// TODO:
+						// re-read from sectionReader, this isn't trivial either
+						// because we may have to avoid concurrent reads on the files
+					}
+				}
 			}
 		}
 
@@ -156,6 +183,7 @@ func (c *clientConnection) getResponse(fh FileHandler) {
 	}
 
 	c.payload = make(chan *ServerPayload, 1024*1024)
+	c.resend = make(chan *ServerPayload, 1024*1024)
 	c.metadata = make(chan *ServerMetaData, len(c.req.files))
 	c.reschedule = make(chan *ClientAck, 1024)
 

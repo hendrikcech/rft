@@ -49,17 +49,18 @@ func (f *FileResponse) Read(p []byte) (n int, err error) {
 }
 
 type resendData struct {
-	started  bool
-	metadata bool
-	head     uint64
-	res      []*ResendEntry
+	started    bool
+	metadata   bool
+	head       uint64
+	res        []*ResendEntry
+	bufferSize int
 }
 
 func (f *FileResponse) getResendEntries() *resendData {
 	f.lock.Lock()
 	defer f.lock.Unlock()
 
-	// TODO: Make this call threadsafe
+	// TODO: Make this call fast and threadsafe
 	res := f.buffer.Gaps(f.head)
 	if !f.metadata {
 		res = append(res, &ResendEntry{
@@ -74,11 +75,13 @@ func (f *FileResponse) getResendEntries() *resendData {
 			length:    uint8(f.chunks - f.head),
 		})
 	}
+	log.Printf("file response buffer queue.Len() = %v\n", f.buffer.Len())
 	return &resendData{
-		started:  (f.head > 0) || f.buffer.Len() > 0,
-		metadata: f.metadata,
-		head:     f.head,
-		res:      res,
+		started:    (f.head > 0) || f.buffer.Len() > 0,
+		metadata:   f.metadata,
+		head:       f.head,
+		res:        res,
+		bufferSize: cap(f.pc) - len(f.pc),
 	}
 }
 

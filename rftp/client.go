@@ -106,6 +106,7 @@ func (c *Client) waitForCloseConnection() {
 			}
 
 		case <-c.closeMsg:
+			c.closeConnection()
 		case <-c.err:
 			c.closeConnection()
 		}
@@ -135,36 +136,27 @@ func (c *Client) waitForFirstResponse(try int) error {
 }
 
 func (c *Client) sendAcks(conn connection) {
-	timeout := time.NewTimer(20 * c.rtt)
+	timeout := time.NewTimer(c.rtt)
 	ackSendMap := map[uint8]time.Time{}
 	nextAckNum := uint8(1)
 	lastPing := time.Now()
 
 	for {
 		select {
-		case ackNum := <-c.ack:
-			if send, ok := ackSendMap[ackNum]; ok {
-				c.rtt = time.Since(send)
-			}
-			log.Println("set last ping1")
-			lastPing = time.Now()
-		default:
-		}
-
-		select {
 		case <-timeout.C:
-			if time.Since(lastPing) > 1*time.Second+200*c.rtt {
+			if time.Since(lastPing) > 1*time.Second+2000*c.rtt {
 				log.Println("connection timed out")
 				c.err <- struct{}{}
-				return
 			}
 			maxFile := uint16(0)
 			maxOff := uint64(0)
 			status := uint8(0)
+			maxTransmission := 1
 			res := []*ResendEntry{}
 			for i, r := range c.responses {
 				index := uint16(i)
 				rd := r.getResendEntries()
+				maxTransmission += rd.bufferSize
 				if rd.res != nil {
 					res = append(res, rd.res...)
 				}
@@ -178,7 +170,7 @@ func (c *Client) sendAcks(conn connection) {
 			}
 			ack := ClientAck{
 				ackNumber:           nextAckNum,
-				maxTransmissionRate: 0,
+				maxTransmissionRate: uint32(maxTransmission),
 				fileIndex:           maxFile,
 				offset:              maxOff,
 				resendEntries:       res,
@@ -193,7 +185,7 @@ func (c *Client) sendAcks(conn connection) {
 			if nextAckNum == 0 {
 				nextAckNum++
 			}
-			timeout = time.NewTimer(20 * c.rtt)
+			timeout = time.NewTimer(c.rtt)
 
 		case ackNum := <-c.ack:
 			log.Println("set last ping2")

@@ -22,13 +22,14 @@ type fileReader struct {
 }
 
 type clientConnection struct {
-	rtt      time.Duration
-	req      *ClientRequest
-	payload  chan *ServerPayload
-	metadata chan *ServerMetaData
-	ack      chan *ClientAck
-	cclose   chan *CloseConnection
-	socket   io.Writer
+	rtt        time.Duration
+	req        *ClientRequest
+	payload    chan *ServerPayload
+	metadata   chan *ServerMetaData
+	ack        chan *ClientAck
+	reschedule chan *ClientAck
+	cclose     chan *CloseConnection
+	socket     io.Writer
 
 	metadataCache map[uint16]*ServerMetaData
 	payloadCache  map[uint16]map[uint64]*ServerPayload
@@ -37,7 +38,7 @@ type clientConnection struct {
 func (c *clientConnection) writeResponse() {
 	log.Println("start writing response packets")
 	lastAck := uint8(0)
-	rateControl := &aimd{congRate: 4}
+	rateControl := &aimd{congRate: 1000}
 	rateControl.start()
 	defer rateControl.stop()
 
@@ -45,6 +46,8 @@ func (c *clientConnection) writeResponse() {
 		var err error
 
 		if rateControl.isAvailable() {
+			log.Println("rate budget available")
+
 			select {
 			case md := <-c.metadata:
 				log.Printf(
@@ -67,20 +70,27 @@ func (c *clientConnection) writeResponse() {
 				rateControl.onSend()
 
 			case ack := <-c.ack:
+				log.Printf("received ack: %v\n", ack)
 				// TODO: duplicate ACK block
 				lastAck = ack.ackNumber
 				rateControl.onACK(ack)
-				c.reschedule(ack)
+				if ack.ackNumber%5 == 0 {
+					c.reschedule <- ack
+				}
 			}
 		} else {
+			log.Println("no rate budget available")
 			select {
 			case <-rateControl.awaitAvailable():
 				continue
 			case ack := <-c.ack:
+				log.Printf("received ack: %v\n", ack)
 				// TODO: duplicate ACK block
 				lastAck = ack.ackNumber
 				rateControl.onACK(ack)
-				c.reschedule(ack)
+				if ack.ackNumber%5 == 0 {
+					c.reschedule <- ack
+				}
 			}
 		}
 
@@ -102,20 +112,22 @@ func (c *clientConnection) saveToCache(p *ServerPayload) {
 	c.payloadCache[p.fileIndex][p.offset] = p
 }
 
-func (c *clientConnection) reschedule(ack *ClientAck) {
-	// use a map to avoid duplicates in metadata resend entries
-	metadata := map[uint16]struct{}{}
-	if ack.status != 0 {
-		metadata[ack.fileIndex] = struct{}{}
-	}
+func (c *clientConnection) rescheduler() {
 
-	for _, re := range ack.resendEntries {
-		if re.length == 0 {
-			metadata[re.fileIndex] = struct{}{}
+	for ack := range c.reschedule {
+		// use a map to avoid duplicates in metadata resend entries
+		metadata := map[uint16]struct{}{}
+		if ack.status != 0 {
+			metadata[ack.fileIndex] = struct{}{}
 		}
-		if m, ok := c.payloadCache[re.fileIndex]; ok {
-			for i := uint64(0); i < uint64(re.length); i++ {
-				if p, ok := m[re.offset+i]; ok {
+
+		for _, re := range ack.resendEntries {
+			if re.length == 0 {
+				metadata[re.fileIndex] = struct{}{}
+			}
+			if m, ok := c.payloadCache[re.fileIndex]; ok {
+				//				for i := uint64(0); i < uint64(re.length); i++ {
+				if p, ok := m[re.offset]; ok {
 					c.payload <- p
 					log.Printf("rescheduled payload for file: %v at offset: %v\n", p.fileIndex, p.offset)
 				} else {
@@ -124,15 +136,16 @@ func (c *clientConnection) reschedule(ack *ClientAck) {
 					// re-read from sectionReader, this isn't trivial either
 					// because we may have to avoid concurrent reads on the files
 				}
+				//				}
 			}
 		}
-	}
 
-	// resend metadata
-	for k := range metadata {
-		if m, ok := c.metadataCache[k]; ok {
-			log.Printf("rescheduled metadata for file: %v\n", k)
-			c.metadata <- m
+		// resend metadata
+		for k := range metadata {
+			if m, ok := c.metadataCache[k]; ok {
+				log.Printf("rescheduled metadata for file: %v\n", k)
+				c.metadata <- m
+			}
 		}
 	}
 }
@@ -142,10 +155,12 @@ func (c *clientConnection) getResponse(fh FileHandler) {
 		// TODO Send error file not available
 	}
 
-	c.payload = make(chan *ServerPayload, 1024)
+	c.payload = make(chan *ServerPayload, 1024*1024)
 	c.metadata = make(chan *ServerMetaData, len(c.req.files))
+	c.reschedule = make(chan *ClientAck, 1024)
 
 	go c.writeResponse()
+	go c.rescheduler()
 
 	srs := []fileReader{}
 	for i, fr := range c.req.files {

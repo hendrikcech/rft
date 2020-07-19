@@ -1,6 +1,7 @@
 package rftp
 
 import (
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -38,12 +39,18 @@ type aimd struct {
 	lastAck               uint8
 	decreaseCoolOffPeriod uint8
 
-	resetTicker   *time.Ticker
-	availableChan chan struct{}
+	resetTicker         *time.Ticker
+	availableChan       chan struct{}
+	notifyAvailableLock sync.Mutex
 }
+
+var _ RateControl = (*aimd)(nil)
 
 func (c *aimd) start() {
 	c.resetTicker = time.NewTicker(1 * time.Second)
+	c.availableChan = make(chan struct{}, 1)
+	c.notifyAvailableLock = sync.Mutex{}
+
 	go func() {
 		for {
 			atomic.StoreUint32(&c.sent, 0)
@@ -54,8 +61,6 @@ func (c *aimd) start() {
 			}
 		}
 	}()
-
-	c.availableChan = make(chan struct{}, 1)
 }
 
 func (c *aimd) stop() {
@@ -69,9 +74,11 @@ func (c *aimd) awaitAvailable() <-chan struct{} {
 func (c *aimd) notifyAvailable() {
 	// If last notification (value of c.availableChan) has not been read, a write
 	// would block.
+	c.notifyAvailableLock.Lock()
 	if len(c.availableChan) < cap(c.availableChan) {
 		c.availableChan <- struct{}{}
 	}
+	c.notifyAvailableLock.Unlock()
 }
 
 // Returns true if both congestion and flow control allow sending one packet

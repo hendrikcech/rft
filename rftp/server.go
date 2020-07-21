@@ -21,15 +21,16 @@ type fileReader struct {
 }
 
 type clientConnection struct {
-	rtt        time.Duration
-	req        *ClientRequest
-	payload    chan *ServerPayload
-	resend     chan *ServerPayload
-	metadata   chan *ServerMetaData
-	ack        chan *ClientAck
-	reschedule chan *ClientAck
-	cclose     chan *CloseConnection
-	socket     io.Writer
+	rtt           time.Duration
+	req           *ClientRequest
+	payload       chan *ServerPayload
+	resend        chan *ServerPayload
+	metadata      chan *ServerMetaData
+	ack           chan *ClientAck
+	reschedule    chan *ClientAck
+	rescheduledAt map[uint64]time.Time
+	cclose        chan *CloseConnection
+	socket        io.Writer
 
 	metadataCache map[uint16]*ServerMetaData
 	payloadCache  map[uint16]map[uint64]*ServerPayload
@@ -147,7 +148,10 @@ func (c *clientConnection) rescheduler() {
 
 		sort.Sort(&ack.resendEntries)
 		log.Printf("rescheduling sorted ack: %v\n", ack)
-		for _, re := range ack.resendEntries {
+		for i, re := range ack.resendEntries {
+			if uint32(i) > ack.maxTransmissionRate {
+				break
+			}
 			if re.length == 0 {
 				metadata[re.fileIndex] = struct{}{}
 			}

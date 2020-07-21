@@ -187,7 +187,6 @@ func (c *Client) sendAcks(conn connection) {
 				status:              status,
 			}
 			ackSendMap[nextAckNum] = time.Now()
-			log.Printf("sending ack: %v\n", ack.String())
 			c.Conn.send(ack)
 
 			nextAckNum++
@@ -195,7 +194,7 @@ func (c *Client) sendAcks(conn connection) {
 			if nextAckNum == 0 {
 				nextAckNum++
 			}
-			timeout = time.NewTimer(time.Second)
+			timeout = time.NewTimer(100 * c.rtt)
 
 		case ackNum := <-c.ack:
 			if send, ok := ackSendMap[ackNum]; ok {

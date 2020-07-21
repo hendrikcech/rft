@@ -22,7 +22,9 @@ type FileResponse struct {
 	preader       *io.PipeReader
 	pwriter       *io.PipeWriter
 	buffer        *chunkQueue
+	maxBufferSize int
 	resendEntries map[uint64]struct{}
+	outOfOrder    map[uint64]struct{}
 	head          uint64
 	metadata      bool
 	lock          sync.Mutex
@@ -41,14 +43,17 @@ func newFileResponse(index uint16) *FileResponse {
 		index: index,
 
 		mc: make(chan *ServerMetaData),
-		pc: make(chan *ServerPayload, 1024),
+		pc: make(chan *ServerPayload, 1024*1024),
 		cc: make(chan struct{}),
 
 		preader:       r,
 		pwriter:       w,
 		buffer:        newChunkQueue(index),
+		maxBufferSize: 10 * 1024,
 		resendEntries: make(map[uint64]struct{}),
 		hasher:        md5.New(),
+
+		outOfOrder: make(map[uint64]struct{}),
 	}
 }
 
@@ -97,11 +102,13 @@ func (f *FileResponse) getResendEntries(max int) *resendData {
 		if len(res) > max {
 			break
 		}
-		res = append(res, &ResendEntry{
-			fileIndex: f.index,
-			offset:    uint64(offset),
-			length:    1,
-		})
+		if _, ok := f.outOfOrder[uint64(offset)]; !ok {
+			res = append(res, &ResendEntry{
+				fileIndex: f.index,
+				offset:    uint64(offset),
+				length:    1,
+			})
+		}
 	}
 
 	if !f.metadata {
@@ -122,7 +129,18 @@ func (f *FileResponse) getResendEntries(max int) *resendData {
 		metadata:   f.metadata,
 		head:       f.head,
 		res:        res,
-		bufferSize: cap(f.pc) - len(f.pc),
+		bufferSize: f.getMaxTransmissionRate(),
+	}
+}
+
+func (f *FileResponse) getMaxTransmissionRate() int {
+	if f.maxBufferSize > f.buffer.Len() {
+		return f.maxBufferSize - f.buffer.Len()
+	} else {
+		if f.buffer.Top() < f.head {
+			return 0
+		}
+		return 10 * int(f.buffer.Top()-f.head)
 	}
 }
 
@@ -167,10 +185,11 @@ func (f *FileResponse) write(done chan<- uint16) {
 				delete(f.resendEntries, f.head)
 				f.head++
 				f.lock.Unlock()
-			} else {
+			} else if payload.offset > f.head {
 				if payload.offset > f.head {
 					f.lock.Lock()
 					heap.Push(f.buffer, payload)
+					f.outOfOrder[payload.offset] = struct{}{}
 					for i := f.head; i < payload.offset; i++ {
 						f.resendEntries[i] = struct{}{}
 					}

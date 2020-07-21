@@ -88,7 +88,7 @@ func (c *aimd) isAvailable() bool {
 	return sent < c.congRate && sent < c.flowRate
 }
 
-func (c *aimd) onACK(ack *ClientAck) {
+func (c *aimd) onAck(ack *ClientAck) {
 	if ack.ackNumber < c.lastAck {
 		// Should we make sure that out-of-order ACKs are handled earlier?
 		return

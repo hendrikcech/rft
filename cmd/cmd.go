@@ -16,9 +16,10 @@ import (
 )
 
 var (
-	s    bool
-	t    int
-	p, q float32
+	s     bool
+	t     int
+	p, q  float32
+	delay uint
 )
 
 var rootCmd = &cobra.Command{
@@ -54,16 +55,16 @@ var rootCmd = &cobra.Command{
 		hs := fmt.Sprintf("%v:%v", host, t)
 		log.Printf("running client request to host '%v' for files %v\n", hs, files)
 
-		var client rftp.Client
+		rftp.Delay = delay
+
+		conn := rftp.NewUDPConnection()
 		if p != -1 || q != -1 {
-			lossSim := rftp.NewMarkovLossSimulator(p, q)
-			conn := rftp.NewUDPConnection()
-			conn.LossSim(lossSim)
-			client = rftp.Client{Conn: conn}
 			rand.Seed(time.Now().UTC().UnixNano())
-		} else {
-			client = rftp.Client{Conn: rftp.NewUDPConnection()}
+			lossSim := rftp.NewMarkovLossSimulator(p, q)
+			conn.LossSim(lossSim)
 		}
+
+		client := rftp.Client{Conn: conn}
 
 		rs, err := client.Request(hs, files)
 		if err != nil {
@@ -105,6 +106,7 @@ Operate in client mode if “–s” is not specified`)
 if only one is specified, assume p=q; if neither is specified assume no loss`)
 	rootCmd.PersistentFlags().Float32VarP(&q, "q", "q", -1, `specify the  loss probabilities for the Markov chain model (0 <= p <= 1)
 if only one is specified, assume p=q; if neither is specified assume no loss`)
+	rootCmd.PersistentFlags().UintVarP(&delay, "delay", "", 0, "artifical delay that is added to the RTT (in ms)")
 }
 
 func Execute() {

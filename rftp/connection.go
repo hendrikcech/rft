@@ -27,6 +27,9 @@ type packetHandler interface {
 	handle(io.Writer, *packet)
 }
 
+// Each outgoing message is delayed by Delay-many milliseconds.
+var Delay uint
+
 type connection interface {
 	handle(msgType uint8, h packetHandler)
 	receive() error
@@ -206,9 +209,15 @@ func sendTo(writer io.Writer, msg encoding.BinaryMarshaler) error {
 		return err
 	}
 
-	_, err = writer.Write(append(hs, bs...))
-
-	return err
+	if Delay > 0 {
+		time.AfterFunc(time.Duration(Delay)*time.Millisecond, func() {
+			writer.Write(append(hs, bs...))
+		})
+		return nil
+	} else {
+		_, err = writer.Write(append(hs, bs...))
+		return err
+	}
 }
 
 var testConnectionAddr = &net.UDPAddr{IP: net.IPv4(10, 0, 0, 1), Port: 1000}

@@ -60,7 +60,7 @@ func (c *clientConnection) writeResponse() {
 			case ack := <-c.ack:
 				// TODO: duplicate ACK block
 				lastAck = ack.ackNumber
-				rateControl.onACK(ack)
+				rateControl.onAck(ack)
 				c.reschedule <- ack
 
 			default:
@@ -89,7 +89,7 @@ func (c *clientConnection) writeResponse() {
 			case ack := <-c.ack:
 				// TODO: duplicate ACK block
 				lastAck = ack.ackNumber
-				rateControl.onACK(ack)
+				rateControl.onAck(ack)
 				c.reschedule <- ack
 			}
 		} else {
@@ -100,7 +100,7 @@ func (c *clientConnection) writeResponse() {
 				//log.Printf("received ack: %v\n", ack)
 				// TODO: duplicate ACK block
 				lastAck = ack.ackNumber
-				rateControl.onACK(ack)
+				rateControl.onAck(ack)
 				c.reschedule <- ack
 			}
 		}

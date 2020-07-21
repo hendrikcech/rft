@@ -33,6 +33,7 @@ type clientConnection struct {
 
 	metadataCache map[uint16]*ServerMetaData
 	payloadCache  map[uint16]map[uint64]*ServerPayload
+	cacheLock     sync.Mutex
 }
 
 func (c *clientConnection) writeResponse() {
@@ -113,12 +114,26 @@ func (c *clientConnection) writeResponse() {
 // explicit acks per file, so we have to calculate it, to avoid keeping all
 // files in the cache.
 func (c *clientConnection) saveToCache(p *ServerPayload) {
+	c.cacheLock.Lock()
+	defer c.cacheLock.Unlock()
 	_, ok := c.payloadCache[p.fileIndex]
 	if !ok {
 		c.payloadCache[p.fileIndex] = make(map[uint64]*ServerPayload)
 	}
 
 	c.payloadCache[p.fileIndex][p.offset] = p
+}
+
+func (c *clientConnection) getFromCache(file uint16, offset uint64) (*ServerPayload, bool) {
+	c.cacheLock.Lock()
+	defer c.cacheLock.Unlock()
+
+	if c, ok := c.payloadCache[file]; ok {
+		if p, ok := c[offset]; ok {
+			return p, true
+		}
+	}
+	return nil, false
 }
 
 func (c *clientConnection) rescheduler() {
@@ -136,22 +151,14 @@ func (c *clientConnection) rescheduler() {
 			if re.length == 0 {
 				metadata[re.fileIndex] = struct{}{}
 			}
-			if m, ok := c.payloadCache[re.fileIndex]; ok {
+			if p, ok := c.getFromCache(re.fileIndex, re.offset); ok {
 				if re.length == 0 {
-					if p, ok := m[re.offset]; ok {
-						c.resend <- p
-						log.Printf("rescheduled payload for file: %v at offset: %v\n", p.fileIndex, p.offset)
-					} else {
-						log.Printf("didn't find resend entry in cache: %v\n", re.offset)
-						break
-						// TODO:
-						// re-read from sectionReader, this isn't trivial either
-						// because we may have to avoid concurrent reads on the files
-					}
+					c.resend <- p
+					log.Printf("rescheduled payload for file: %v at offset: %v\n", p.fileIndex, p.offset)
 				}
 
 				for i := uint64(0); i < uint64(re.length); i++ {
-					if p, ok := m[re.offset+i]; ok {
+					if p, ok := c.getFromCache(re.fileIndex, re.offset+i); ok {
 						c.resend <- p
 						log.Printf("rescheduled payload for file: %v at offset: %v\n", p.fileIndex, p.offset)
 					} else {

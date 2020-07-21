@@ -4,7 +4,6 @@ package cmd
 import (
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"os"
 
@@ -13,6 +12,7 @@ import (
 
 	"github.com/hendrikcech/rft/rftp"
 	"github.com/spf13/cobra"
+	"path/filepath"
 )
 
 var (
@@ -79,18 +79,34 @@ var rootCmd = &cobra.Command{
 }
 
 func directoryHandler(dirname string) rftp.FileHandler {
-	fi, err := ioutil.ReadDir(dirname)
-	if err != nil {
-		return nil
+	type file struct {
+		path string
+		info os.FileInfo
 	}
+
+	var files []file
+	filepath.Walk(dirname, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			log.Print(err)
+			return nil
+		}
+
+		if !info.IsDir() {
+			p := path[len(dirname)+1:] // relative to the served directory
+			files = append(files, file{p, info})
+		}
+		return nil
+	})
+
 	return func(name string, offset uint64) *io.SectionReader {
-		for _, f := range fi {
-			if f.Name() == name {
-				file, err := os.Open(f.Name())
+		for _, f := range files {
+			if f.path == name {
+				file, err := os.Open(filepath.Join(dirname, f.path))
 				if err != nil {
+					log.Printf("%s", err)
 					return nil
 				}
-				return io.NewSectionReader(file, int64(offset), f.Size())
+				return io.NewSectionReader(file, int64(offset), f.info.Size())
 			}
 		}
 		return nil

@@ -1,48 +1,258 @@
-// +build !s2
-
 package rftp
 
 import (
 	"crypto/md5"
-	"encoding"
 	"fmt"
 	"hash"
 	"io"
-	"io/ioutil"
 	"log"
 	"net"
-	"os"
+	"sort"
 	"sync"
 	"time"
 )
 
-type Lister interface {
-	List() ([]os.FileInfo, error)
+type FileHandler func(name string, offset uint64) *io.SectionReader
+
+type fileReader struct {
+	index  uint16
+	sr     *io.SectionReader
+	hasher hash.Hash
+}
+
+type clientConnection struct {
+	rtt        time.Duration
+	req        *ClientRequest
+	payload    chan *ServerPayload
+	resend     chan *ServerPayload
+	metadata   chan *ServerMetaData
+	ack        chan *ClientAck
+	reschedule chan *ClientAck
+	cclose     chan *CloseConnection
+	socket     io.Writer
+
+	metadataCache map[uint16]*ServerMetaData
+	payloadCache  map[uint16]map[uint64]*ServerPayload
+}
+
+func (c *clientConnection) writeResponse() {
+	log.Println("start writing response packets")
+	lastAck := uint8(0)
+	rateControl := &aimd{congRate: 1000}
+	rateControl.start()
+	defer rateControl.stop()
+
+	for {
+		var err error
+
+		if rateControl.isAvailable() {
+
+			select {
+			case pl := <-c.resend:
+				log.Printf("resending payload for file %v at offset %v\n", pl.fileIndex, pl.offset)
+				pl.ackNumber = lastAck
+				err = sendTo(c.socket, *pl)
+				rateControl.onSend()
+				continue
+
+			case ack := <-c.ack:
+				// TODO: duplicate ACK block
+				lastAck = ack.ackNumber
+				rateControl.onAck(ack)
+				c.reschedule <- ack
+
+			default:
+			}
+			select {
+			case md := <-c.metadata:
+				log.Printf(
+					"sending metadata for file %v: status: %v, size: %v, checksum: %x\n",
+					md.fileIndex,
+					md.status,
+					md.size,
+					md.checkSum,
+				)
+				md.ackNum = lastAck
+				c.metadataCache[md.fileIndex] = md
+				err = sendTo(c.socket, *md)
+				rateControl.onSend()
+
+			case pl := <-c.payload:
+				log.Printf("sending payload for file %v at offset %v\n", pl.fileIndex, pl.offset)
+				pl.ackNumber = lastAck
+				c.saveToCache(pl)
+				err = sendTo(c.socket, *pl)
+				rateControl.onSend()
+
+			case ack := <-c.ack:
+				// TODO: duplicate ACK block
+				lastAck = ack.ackNumber
+				rateControl.onAck(ack)
+				c.reschedule <- ack
+			}
+		} else {
+			select {
+			case <-rateControl.awaitAvailable():
+				continue
+			case ack := <-c.ack:
+				//log.Printf("received ack: %v\n", ack)
+				// TODO: duplicate ACK block
+				lastAck = ack.ackNumber
+				rateControl.onAck(ack)
+				c.reschedule <- ack
+			}
+		}
+
+		if err != nil {
+			log.Println(err)
+		}
+	}
+}
+
+// TODO: Drop cached payloads. That's not trivial, because we don't have
+// explicit acks per file, so we have to calculate it, to avoid keeping all
+// files in the cache.
+func (c *clientConnection) saveToCache(p *ServerPayload) {
+	_, ok := c.payloadCache[p.fileIndex]
+	if !ok {
+		c.payloadCache[p.fileIndex] = make(map[uint64]*ServerPayload)
+	}
+
+	c.payloadCache[p.fileIndex][p.offset] = p
+}
+
+func (c *clientConnection) rescheduler() {
+
+	for ack := range c.reschedule {
+		// use a map to avoid duplicates in metadata resend entries
+		metadata := map[uint16]struct{}{}
+		if ack.status != 0 {
+			metadata[ack.fileIndex] = struct{}{}
+		}
+
+		sort.Sort(&ack.resendEntries)
+		log.Printf("rescheduling sorted ack: %v\n", ack)
+		for _, re := range ack.resendEntries {
+			if re.length == 0 {
+				metadata[re.fileIndex] = struct{}{}
+			}
+			if m, ok := c.payloadCache[re.fileIndex]; ok {
+				if re.length == 0 {
+					if p, ok := m[re.offset]; ok {
+						c.resend <- p
+						log.Printf("rescheduled payload for file: %v at offset: %v\n", p.fileIndex, p.offset)
+					} else {
+						log.Printf("didn't find resend entry in cache: %v\n", re.offset)
+						break
+						// TODO:
+						// re-read from sectionReader, this isn't trivial either
+						// because we may have to avoid concurrent reads on the files
+					}
+				}
+
+				for i := uint64(0); i < uint64(re.length); i++ {
+					if p, ok := m[re.offset+i]; ok {
+						c.resend <- p
+						log.Printf("rescheduled payload for file: %v at offset: %v\n", p.fileIndex, p.offset)
+					} else {
+						log.Printf("didn't find resend entry in cache: %v\n", re.offset+i)
+						break
+						// TODO:
+						// re-read from sectionReader, this isn't trivial either
+						// because we may have to avoid concurrent reads on the files
+					}
+				}
+			}
+		}
+
+		// resend metadata
+		for k := range metadata {
+			if m, ok := c.metadataCache[k]; ok {
+				log.Printf("rescheduled metadata for file: %v\n", k)
+				c.metadata <- m
+			}
+		}
+	}
+}
+
+func (c *clientConnection) getResponse(fh FileHandler) {
+	if fh == nil {
+		// TODO Send error file not available
+	}
+
+	c.payload = make(chan *ServerPayload, 1024*1024)
+	c.resend = make(chan *ServerPayload, 1024*1024)
+	c.metadata = make(chan *ServerMetaData, len(c.req.files))
+	c.reschedule = make(chan *ClientAck, 1024)
+
+	go c.writeResponse()
+	go c.rescheduler()
+
+	srs := []fileReader{}
+	for i, fr := range c.req.files {
+		srs = append(srs, fileReader{
+			index:  uint16(i),
+			sr:     fh(fr.fileName, fr.offset),
+			hasher: md5.New(),
+		})
+	}
+
+	for _, fr := range srs {
+		off := int64(0)
+		done := false
+		for !done {
+			buf := make([]byte, 1024)
+			n, err := fr.sr.ReadAt(buf, 1024*off)
+			if err == io.EOF {
+				done = true
+			}
+			if err != nil {
+				log.Printf("error, on reading file: %v\n", err)
+			}
+			_, err = fr.hasher.Write(buf[:n])
+			if err != nil {
+				log.Printf("failed to write to hash: %v\n", err)
+			}
+			p := &ServerPayload{
+				fileIndex: fr.index,
+				data:      buf[:n],
+				offset:    uint64(off),
+			}
+			off++
+			c.payload <- p
+		}
+		m := &ServerMetaData{fileIndex: fr.index, size: uint64(fr.sr.Size())}
+		copy(m.checkSum[:], fr.hasher.Sum(nil)[:16])
+		c.metadata <- m
+	}
+}
+
+func key(ip *net.UDPAddr) string {
+	return fmt.Sprintf("%v:%v", ip.IP, ip.Port)
 }
 
 type Server struct {
-	SRC     Lister
-	connMgr *connManager
-	Conn    connection
+	Conn connection
+	fh   FileHandler
+
+	clients   map[string]*clientConnection
+	clientMux sync.Mutex
 }
 
-func NewServer(l Lister) *Server {
+func NewServer() *Server {
 	s := &Server{
-		SRC: l,
-		connMgr: &connManager{
-			conns: make(map[string]*clientConnection),
-		},
-		Conn: NewUDPConnection(),
+		Conn:    NewUDPConnection(),
+		clients: make(map[string]*clientConnection),
 	}
-
-	s.Conn.handle(msgClientRequest, handlerFunc(s.handleRequest))
-	s.Conn.handle(msgClientAck, handlerFunc(s.handleACK))
-	s.Conn.handle(msgClose, handlerFunc(s.handleClose))
 
 	return s
 }
 
 func (s *Server) Listen(host string) error {
+	s.Conn.handle(msgClientRequest, handlerFunc(s.handleRequest))
+	s.Conn.handle(msgClientAck, handlerFunc(s.handleACK))
+	s.Conn.handle(msgClose, handlerFunc(s.handleClose))
+
 	cancel, err := s.Conn.listen(host)
 	if err != nil {
 		return err
@@ -51,25 +261,54 @@ func (s *Server) Listen(host string) error {
 	return s.Conn.receive()
 }
 
+func (s *Server) SetFileHandler(fh FileHandler) {
+	s.fh = fh
+}
+
 func (s *Server) handleRequest(w io.Writer, p *packet) {
 	cr := &ClientRequest{}
 	err := cr.UnmarshalBinary(p.data)
 	if err != nil {
 		// TODO: Close connection?
+		log.Println("failed to parse data")
 	}
-	s.accept(w, p.remoteAddr, cr)
+
+	key := key(p.remoteAddr)
+	s.clientMux.Lock()
+	defer s.clientMux.Unlock()
+	if _, ok := s.clients[key]; !ok {
+		c := &clientConnection{
+			ack:    make(chan *ClientAck, 1024),
+			cclose: make(chan *CloseConnection),
+			socket: w,
+			req:    cr,
+
+			payloadCache:  make(map[uint16]map[uint64]*ServerPayload),
+			metadataCache: make(map[uint16]*ServerMetaData),
+		}
+		s.clients[key] = c
+		go c.getResponse(s.fh)
+	} else {
+		// send close, because duplicate connection request
+	}
 }
 
 func (s *Server) handleACK(_ io.Writer, p *packet) {
-	ack := &ClientAck{
-		ackNumber: p.ackNum,
-	}
+	ack := &ClientAck{}
 	err := ack.UnmarshalBinary(p.data)
 	if err != nil {
 		// TODO: Close connection?
 		log.Println("failed to parse ack")
 	}
-	s.connMgr.handle(p.remoteAddr, ack)
+	ack.ackNumber = p.ackNum
+	key := key(p.remoteAddr)
+	s.clientMux.Lock()
+	defer s.clientMux.Unlock()
+	if _, ok := s.clients[key]; !ok {
+		// drop packet
+		return
+	}
+	s.clients[key].ack <- ack
 }
 
 func (s *Server) handleClose(_ io.Writer, p *packet) {
@@ -77,275 +316,6 @@ func (s *Server) handleClose(_ io.Writer, p *packet) {
 	err := cl.UnmarshalBinary(p.data)
 	if err != nil {
 		// TODO What now?
+		log.Println("failed to parse close")
 	}
-	s.connMgr.close(p.remoteAddr)
-}
-
-func findFileIn(name string, files []os.FileInfo) os.FileInfo {
-	for _, f := range files {
-		if f.Name() == name {
-			return f
-		}
-	}
-	return nil
-}
-
-// TODO accept could likely be a lot smarter.  Some caching might be a good
-// idea.  A bit more complex but maybe useful addition would be to have the user
-// specify a handler for any given ClientRequest. Therefore we could replace the
-// Lister by a map of handlers, which match a certain ClientRequest
-// The handler would likely need a writer to write a response to, but it is
-// important that the underlying type implements an io.ReadSeeker, which is
-// needed for retransmission (see sendData or flow and congestion control spec)
-func (s *Server) accept(w io.Writer, addr *net.UDPAddr, cr *ClientRequest) {
-	fs, err := s.SRC.List()
-	if err != nil {
-		// TODO: reject all
-		log.Printf("error while listing src files: %v\n", err)
-	}
-
-	rss := []response{}
-	for _, rf := range cr.files {
-		if f := findFileIn(rf.fileName, fs); f != nil {
-			rs, err := os.Open(f.Name())
-			if err != nil {
-				rss = append(rss, response{
-					rs:     nil,
-					size:   0,
-					status: 0x03,
-				})
-				continue
-			}
-
-			size := f.Size()
-			if size <= 0 {
-				rss = append(rss, response{
-					rs:     nil,
-					size:   0,
-					status: 0x02,
-				})
-			}
-
-			rss = append(rss, response{
-				rs:     rs,
-				size:   uint64(f.Size()),
-				status: 0,
-			})
-		} else {
-			rss = append(rss, response{
-				rs:     nil,
-				size:   0,
-				status: 0x01,
-			})
-		}
-	}
-
-	log.Println("adding connection")
-	s.connMgr.add(w, addr, cr, rss)
-}
-
-type clientConnection struct {
-	rtt    time.Duration
-	ch     chan *ClientAck
-	socket io.Writer
-}
-
-type connManager struct {
-	mux   sync.Mutex
-	conns map[string]*clientConnection
-}
-
-func key(ip *net.UDPAddr) string {
-	return fmt.Sprintf("%v:%v", ip.IP, ip.Port)
-}
-
-func (c *connManager) add(w io.Writer, addr *net.UDPAddr, cr *ClientRequest, rss []response) {
-	// TODO: find requested file and wrap into io.Reader
-	// or send err if not found
-
-	ik := key(addr)
-	ackChan := make(chan *ClientAck)
-	newConn := &clientConnection{
-		ch:     ackChan,
-		socket: w,
-	}
-
-	c.mux.Lock()
-	if _, ok := c.conns[ik]; ok {
-		// TODO: Conn already exists, do nothing, maybe send error to client?
-		return
-	}
-	c.conns[ik] = newConn
-	c.mux.Unlock()
-
-	newConn.sendData(ackChan, cr, rss)
-}
-
-type response struct {
-	rs     io.ReadSeeker
-	status uint8
-	size   uint64
-}
-
-func (c *clientConnection) sendData(ackChan <-chan *ClientAck, cr *ClientRequest, rss []response) {
-	// TODO: send data and handle ACKs
-	// this may be a good place for heavy things like congestion control
-
-	type buffer struct {
-		smd    *ServerMetaData
-		hasher hash.Hash
-		data   []ServerPayload
-	}
-	var buffers []buffer
-	ch := make(chan encoding.BinaryMarshaler, 1024)
-
-	go func() {
-		c.rtt = 1 * time.Second
-		ticker := time.NewTicker(1 * time.Second)
-		timeout := time.NewTimer(7 * c.rtt) //TODO: Adjust timeout duration
-
-		counter := uint32(0)
-		maxTransmission := 10 + cr.maxTransmissionRate
-		lastAck := uint8(0)
-
-		for {
-			log.Printf("server send loop budget counter: %v\n", counter)
-			// this blocks when maxTransmissionRate is already used
-			if counter >= maxTransmission {
-				select {
-				case <-ticker.C:
-					counter = 0
-				case ack := <-ackChan:
-					//maxTransmission = ack.maxTransmissionRate
-					lastAck = ack.ackNumber
-					log.Printf("received ack while waiting for budget: %v, with resend entries:\n%v\n", lastAck, ack.resendEntries)
-					timeout = time.NewTimer(3 * c.rtt)
-					// TODO: schedule resends
-
-					// continue to recheck maxTransmission capacity
-				}
-			}
-
-			for {
-				select {
-				case bm, more := <-ch:
-					if !more {
-						// TODO: Cleanup?
-						return
-					}
-
-					p, ok := bm.(ServerPayload)
-					var err error
-					if ok {
-						p.ackNumber = lastAck
-						err = sendTo(c.socket, p)
-					} else {
-						err = sendTo(c.socket, bm)
-					}
-					if err != nil {
-						// TODO: What now? retry vs. close?
-					}
-					counter++
-
-				case ack := <-ackChan:
-					//maxTransmission = ack.maxTransmissionRate
-					lastAck = ack.ackNumber
-					log.Printf("received ack: %v, with resend entries:\n%v\n", lastAck, ack.resendEntries)
-					timeout = time.NewTimer(3 * c.rtt)
-					// TODO: schedule resends and drop acked bytes
-
-				case <-ticker.C:
-					counter = 0
-
-				case <-timeout.C:
-					// TODO: Cleanup channels etc.
-					// TODO: Update (extend) timeout when acks arrive
-					log.Println("connection timed out")
-					return
-				}
-				if counter >= maxTransmission {
-					break
-				}
-			}
-		}
-	}()
-
-	for i := range cr.files {
-		smd := ServerMetaData{
-			status:    MetaDataStatus(rss[i].status),
-			fileIndex: uint16(i),
-			size:      rss[i].size,
-		}
-		b := buffer{
-			smd:    &smd,
-			hasher: md5.New(), // TODO: Make hash version configurable (including variable smd hash field sizes?)
-			data:   []ServerPayload{},
-		}
-		buffers = append(buffers, b)
-
-		log.Printf("reading file of size %v", rss[i].size)
-		for j := uint64(0); j < smd.size; j += 1024 {
-			buf := make([]byte, 1024)
-			off, err := rss[i].rs.Seek(int64(j), io.SeekStart)
-			if err != nil {
-				log.Printf("error at seek: %v", err)
-			}
-			log.Printf("read at offset %v", off)
-			n, err := rss[i].rs.Read(buf)
-			if err != nil {
-				// TODO
-			}
-			log.Printf("read %v bytes from file", n)
-			_, err = b.hasher.Write(buf[:n])
-			if err != nil {
-				// TODO
-			}
-			payload := ServerPayload{
-				fileIndex: uint16(i),
-				offset:    j / 1024,
-				data:      buf[:n],
-			}
-			b.data = append(b.data, payload)
-			log.Printf("send payload part %d\n", payload.offset)
-			ch <- payload
-		}
-		copy(smd.checkSum[:], b.hasher.Sum(nil)[:16])
-		log.Printf("checksum of file %v\n", b.smd.checkSum)
-		log.Printf("hex checksum of file %x\n", b.hasher.Sum(nil))
-		ch <- smd
-	}
-}
-
-func (c *connManager) handle(addr *net.UDPAddr, ack *ClientAck) {
-	ik := key(addr)
-
-	c.mux.Lock()
-	conn, ok := c.conns[ik]
-	if !ok {
-		// TODO send error conn not found
-	}
-	c.mux.Unlock()
-
-	conn.ch <- ack
-}
-
-func (c *connManager) close(addr *net.UDPAddr) {
-	ik := key(addr)
-
-	c.mux.Lock()
-	conn := c.conns[ik]
-	delete(c.conns, ik)
-	c.mux.Unlock()
-
-	close(conn.ch)
-}
-
-type directory string
-
-func (d directory) List() ([]os.FileInfo, error) {
-	return ioutil.ReadDir(string(d))
-}
-
-func DirectoryLister(dir string) directory {
-	return directory(dir)
 }

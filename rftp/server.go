@@ -205,8 +205,17 @@ func (c *clientConnection) getResponse(fh FileHandler) {
 	}
 
 	for _, fr := range srs {
-		off := int64(0)
+		if fr.sr == nil {
+			c.metadata <- &ServerMetaData{fileIndex: fr.index, status: fileNotExistent}
+			continue
+		}
+		if fr.sr.Size() == 0 {
+			c.metadata <- &ServerMetaData{fileIndex: fr.index, status: fileEmpty}
+			continue
+		}
+
 		done := false
+		off := int64(0)
 		for !done {
 			buf := make([]byte, 1024)
 			n, err := fr.sr.ReadAt(buf, 1024*off)
@@ -228,6 +237,7 @@ func (c *clientConnection) getResponse(fh FileHandler) {
 			off++
 			c.payload <- p
 		}
+
 		m := &ServerMetaData{fileIndex: fr.index, size: uint64(fr.sr.Size())}
 		copy(m.checkSum[:], fr.hasher.Sum(nil)[:16])
 		c.metadata <- m
@@ -296,7 +306,7 @@ func (s *Server) handleRequest(w io.Writer, p *packet) {
 		s.clients[key] = c
 		go c.getResponse(s.fh)
 	} else {
-		// send close, because duplicate connection request
+		// TODO: send close, because duplicate connection request
 	}
 }
 

@@ -3,6 +3,7 @@ package rftp
 import (
 	"container/heap"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"sort"
@@ -112,6 +113,12 @@ func (f *FileResponse) write(done chan<- uint16) {
 		select {
 		case metadata := <-f.mc:
 			f.lock.Lock()
+			if metadata.status != noErr {
+				f.err = fmt.Errorf("Server returned error for file %d: status %s",
+					f.index, metadata.status.String())
+				f.pwriter.Close()
+				return
+			}
 			f.size = metadata.size
 			f.chunks = f.size / 1024
 			if f.size%1024 > 0 {

@@ -14,6 +14,7 @@ import (
 
 type FileResponse struct {
 	index uint16
+	Name  string
 
 	mc chan *ServerMetaData
 	pc chan *ServerPayload
@@ -36,11 +37,12 @@ type FileResponse struct {
 	Err      error
 }
 
-func newFileResponse(index uint16) *FileResponse {
+func newFileResponse(name string, index uint16) *FileResponse {
 	r, w := io.Pipe()
 
 	return &FileResponse{
 		index: index,
+		Name:  name,
 
 		mc: make(chan *ServerMetaData),
 		pc: make(chan *ServerPayload, 1024*1024),
@@ -154,6 +156,7 @@ func (f *FileResponse) write(done chan<- uint16) {
 	for {
 		select {
 		case metadata := <-f.mc:
+			log.Printf("metadata: %v\n", metadata)
 			f.lock.Lock()
 			if metadata.status != noErr {
 				f.Err = fmt.Errorf("Server returned error for file %d: status %s",

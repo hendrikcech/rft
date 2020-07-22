@@ -46,7 +46,7 @@ func (c *Client) Request(host string, files []string) ([]*FileResponse, error) {
 
 	for i, f := range files {
 		fs[i] = FileDescriptor{0, f}
-		c.responses[i] = newFileResponse(uint16(i))
+		c.responses[i] = newFileResponse(f, uint16(i))
 		go c.responses[i].write(c.done)
 	}
 

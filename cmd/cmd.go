@@ -10,9 +10,10 @@ import (
 	"math/rand"
 	"time"
 
+	"path/filepath"
+
 	"github.com/hendrikcech/rft/rftp"
 	"github.com/spf13/cobra"
-	"path/filepath"
 )
 
 var (
@@ -40,7 +41,7 @@ var rootCmd = &cobra.Command{
 		}
 
 		if s {
-			log.Printf("running server on host '%v' and dir %v\n", host, files[0])
+			log.Printf("start file server for dir %v\n", files[0])
 			server := rftp.NewServer()
 			if p != -1 || q != -1 {
 				lossSim := rftp.NewMarkovLossSimulator(p, q)
@@ -53,7 +54,10 @@ var rootCmd = &cobra.Command{
 				return
 			}
 			server.SetFileHandler(dh)
-			server.Listen(fmt.Sprintf(":%v", t))
+			err = server.Listen(fmt.Sprintf(":%v", t))
+			if err != nil {
+				log.Println(err)
+			}
 			return
 		}
 
@@ -151,6 +155,7 @@ func directoryHandler(dirname string) (rftp.FileHandler, error) {
 					log.Printf("%s", err)
 					return nil
 				}
+				log.Printf("handling file: %v, offset: %v, size: %v\n", file, int64(offset), f.info.Size())
 				return io.NewSectionReader(file, int64(offset), f.info.Size())
 			}
 		}
@@ -159,11 +164,11 @@ func directoryHandler(dirname string) (rftp.FileHandler, error) {
 }
 
 func init() {
-	rootCmd.PersistentFlags().BoolVarP(&s, "server", "s", false,
+	rootCmd.Flags().BoolVarP(&s, "server", "s", false,
 		`server mode: accept incoming files from any host. Operate in client mode if
 “–s” is not specified.`)
 
-	rootCmd.PersistentFlags().IntVarP(&t, "port", "t", 0, "specify the port number to use")
+	rootCmd.Flags().IntVarP(&t, "port", "t", 0, "specify the port number to use")
 
 	rootCmd.PersistentFlags().Float32VarP(&p, "p", "p", -1,
 		`specify the loss probabilities for the Markov chain model (0 <= p <= 1). If
@@ -173,7 +178,7 @@ only one is specified, assume p=q; if neither is specified assume no loss`)
 		`specify the loss probabilities for the Markov chain model (0 <= p <= 1). If
 only one is specified, assume p=q; if neither is specified assume no loss`)
 
-	rootCmd.PersistentFlags().StringVarP(&out, "out", "o", ".",
+	rootCmd.Flags().StringVarP(&out, "out", "o", ".",
 		`specify the directory in which the requested files are going to be stored;
 set to '-' to redirect file content to stdout`)
 

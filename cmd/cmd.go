@@ -19,6 +19,7 @@ var (
 	s    bool
 	t    int
 	p, q float32
+	out  string
 )
 
 var rootCmd = &cobra.Command{
@@ -56,6 +57,11 @@ var rootCmd = &cobra.Command{
 			return
 		}
 
+		if info, err := os.Stat(out); out != "-" && (err != nil || !info.IsDir()) {
+			log.Printf("Invalid out path")
+			return
+		}
+
 		hs := fmt.Sprintf("%v:%v", host, t)
 		log.Printf("running client request to host '%v' for files %v\n", hs, files)
 
@@ -70,13 +76,26 @@ var rootCmd = &cobra.Command{
 			client = rftp.Client{Conn: rftp.NewUDPConnection()}
 		}
 
-		rs, err := client.Request(hs, files)
+		reqs, err := client.Request(hs, files)
 		if err != nil {
 			log.Printf("error on request: %v\n", err)
 		}
 
-		for _, r := range rs {
-			io.Copy(os.Stdout, r)
+		for i, req := range reqs {
+			var w io.Writer
+			// TODO: verify checksum: method on req?
+			if out == "-" {
+				w = os.Stdout
+			} else {
+				path := filepath.Join(out, files[i])
+				log.Printf("Write to %s, %s, %s", path, out, files[i])
+				w, err = os.OpenFile(path, os.O_WRONLY|os.O_CREATE, 0644)
+				if err != nil {
+					log.Printf("Can't write file to %s: %s", path, err)
+					return
+				}
+			}
+			io.Copy(w, req)
 			log.Println("finish write")
 		}
 
@@ -136,13 +155,23 @@ func directoryHandler(dirname string) (rftp.FileHandler, error) {
 }
 
 func init() {
-	rootCmd.PersistentFlags().BoolVarP(&s, "server", "s", false, `server mode: accept incoming files from any host
-Operate in client mode if “–s” is not specified`)
+	rootCmd.PersistentFlags().BoolVarP(&s, "server", "s", false, `server mode:
+accept incoming files from any host Operate in client mode if “–s” is not
+specified`)
+
 	rootCmd.PersistentFlags().IntVarP(&t, "port", "t", 0, "specify the port number to use")
-	rootCmd.PersistentFlags().Float32VarP(&p, "p", "p", -1, `specify the  loss probabilities for the Markov chain model (0 <= p <= 1)
-if only one is specified, assume p=q; if neither is specified assume no loss`)
-	rootCmd.PersistentFlags().Float32VarP(&q, "q", "q", -1, `specify the  loss probabilities for the Markov chain model (0 <= p <= 1)
-if only one is specified, assume p=q; if neither is specified assume no loss`)
+
+	rootCmd.PersistentFlags().Float32VarP(&p, "p", "p", -1, `specify the loss
+probabilities for the Markov chain model (0 <= p <= 1) if only one is specified,
+assume p=q; if neither is specified assume no loss`)
+
+	rootCmd.PersistentFlags().Float32VarP(&q, "q", "q", -1, `specify the loss
+probabilities for the Markov chain model (0 <= p <= 1) if only one is specified,
+assume p=q; if neither is specified assume no loss`)
+
+	rootCmd.PersistentFlags().StringVarP(&out, "out", "o", ".", `specify the
+	directory in which the requested files are going to be stored; set to '-' to
+	redirect file content to stdout`)
 }
 
 func Execute() {

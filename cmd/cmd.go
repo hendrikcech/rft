@@ -96,7 +96,12 @@ var rootCmd = &cobra.Command{
 				}
 			}
 			io.Copy(w, req)
-			log.Println("finish write")
+
+			if !req.ChecksumValid() {
+				log.Printf("Checksum of %s is NOT valid", files[i])
+			} else {
+				log.Printf("Checksum of %s is valid", files[i])
+			}
 		}
 
 		// TODO: remove. Without this not all goroutines are finishing. For example,

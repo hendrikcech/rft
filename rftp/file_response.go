@@ -1,8 +1,12 @@
 package rftp
 
 import (
+	"bytes"
 	"container/heap"
+	"crypto/md5"
+	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"log"
 	"sort"
@@ -23,6 +27,7 @@ type FileResponse struct {
 	head          uint64
 	metadata      bool
 	lock          sync.Mutex
+	hasher        hash.Hash
 
 	size     uint64
 	chunks   uint64
@@ -44,11 +49,27 @@ func newFileResponse(index uint16) *FileResponse {
 		pwriter:       w,
 		buffer:        newChunkQueue(index),
 		resendEntries: make(map[uint64]struct{}),
+		hasher:        md5.New(),
 	}
 }
 
 func (f *FileResponse) Read(p []byte) (n int, err error) {
-	return f.preader.Read(p)
+	n, err = f.preader.Read(p)
+	if err != nil {
+		return
+	}
+	_, err = f.hasher.Write(p[:n])
+	if err != nil {
+		return
+	}
+	return
+}
+
+// Returns true iff the checksum of the received file matches the checksum
+// transmitted in the metadata message. Returns false while the file is still in
+// transit.
+func (f *FileResponse) ChecksumValid() bool {
+	return bytes.Compare(f.checksum[:], f.hasher.Sum(nil)[:16]) == 0
 }
 
 type resendData struct {

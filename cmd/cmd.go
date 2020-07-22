@@ -4,7 +4,6 @@ package cmd
 import (
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"os"
 
@@ -13,6 +12,7 @@ import (
 
 	"github.com/hendrikcech/rft/rftp"
 	"github.com/spf13/cobra"
+	"path/filepath"
 )
 
 var (
@@ -46,7 +46,12 @@ var rootCmd = &cobra.Command{
 				server.Conn.LossSim(lossSim)
 				rand.Seed(time.Now().UTC().UnixNano())
 			}
-			server.SetFileHandler(directoryHandler(files[0]))
+			dh, err := directoryHandler(files[0])
+			if err != nil {
+				log.Printf("Can not serve directory %s: %s", files[0], err)
+				return
+			}
+			server.SetFileHandler(dh)
 			server.Listen(fmt.Sprintf(":%v", t))
 			return
 		}
@@ -78,23 +83,53 @@ var rootCmd = &cobra.Command{
 	},
 }
 
-func directoryHandler(dirname string) rftp.FileHandler {
-	fi, err := ioutil.ReadDir(dirname)
+func directoryHandler(dirname string) (rftp.FileHandler, error) {
+	info, err := os.Stat(dirname)
 	if err != nil {
-		return nil
+		return nil, err
 	}
-	return func(name string, offset uint64) *io.SectionReader {
-		for _, f := range fi {
-			if f.Name() == name {
-				file, err := os.Open(f.Name())
-				if err != nil {
-					return nil
-				}
-				return io.NewSectionReader(file, int64(offset), f.Size())
+	if !info.IsDir() {
+		return nil, fmt.Errorf("Is file, not directory")
+	}
+
+	type file struct {
+		path string
+		info os.FileInfo
+	}
+
+	var files []file
+	walkFn := func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+
+		if !info.IsDir() {
+			p := path[len(dirname)+1:] // relative to the served directory
+			p, err := filepath.Rel(dirname, path)
+			if err != nil {
+				return err
 			}
+			files = append(files, file{p, info})
 		}
 		return nil
 	}
+	if err := filepath.Walk(dirname, walkFn); err != nil {
+		return nil, err
+	}
+
+	return func(name string, offset uint64) *io.SectionReader {
+		for _, f := range files {
+			if f.path == name {
+				file, err := os.Open(filepath.Join(dirname, f.path))
+				if err != nil {
+					log.Printf("%s", err)
+					return nil
+				}
+				return io.NewSectionReader(file, int64(offset), f.info.Size())
+			}
+		}
+		return nil
+	}, nil
 }
 
 func init() {

@@ -104,7 +104,6 @@ func directoryHandler(dirname string) (rftp.FileHandler, error) {
 		}
 
 		if !info.IsDir() {
-			p := path[len(dirname)+1:] // relative to the served directory
 			p, err := filepath.Rel(dirname, path)
 			if err != nil {
 				return err

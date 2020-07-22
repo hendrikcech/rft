@@ -99,7 +99,11 @@ func (c *Client) waitForCloseConnection() {
 	done := 0
 	for {
 		select {
-		case <-c.done:
+		case i := <-c.done:
+			fr := c.responses[i]
+			if fr.err != nil {
+				log.Printf("Transfer of file %v aborted: %s", i, fr.err)
+			}
 			done++
 			if done == len(c.responses) {
 				c.closeConnection()

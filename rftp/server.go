@@ -269,6 +269,10 @@ func NewServer() *Server {
 	return s
 }
 
+func (s *Server) Addr() net.Addr {
+	return s.Conn.addr()
+}
+
 func (s *Server) Listen(host string) error {
 	s.Conn.handle(msgClientRequest, handlerFunc(s.handleRequest))
 	s.Conn.handle(msgClientAck, handlerFunc(s.handleACK))
@@ -279,6 +283,8 @@ func (s *Server) Listen(host string) error {
 		return err
 	}
 	defer cancel()
+
+	log.Printf("running server on addr '%v'\n", s.Conn.addr())
 	return s.Conn.receive()
 }
 

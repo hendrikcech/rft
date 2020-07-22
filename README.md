@@ -38,3 +38,16 @@ go build
 
 For more options run `./rft -h`.
 
+## Implementation test
+
+There's an integration test runner, that executes an `rft` binary to start a
+server and executes some test file transmissions. It can be used like this:
+
+```shell
+go build
+go run main_integration.go
+```
+
+If you want to use a different `rft` executable than the one provided by this
+repository, just replace `go build` by `cp <your/rft/binary> .`, to copy it to
+this directory before running the test runner.

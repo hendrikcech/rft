@@ -28,6 +28,7 @@ type packetHandler interface {
 }
 
 type connection interface {
+	addr() net.Addr
 	handle(msgType uint8, h packetHandler)
 	receive() error
 	listen(host string) (func(), error)
@@ -62,6 +63,10 @@ func NewUDPConnection() *udpConnection {
 		bufferSize: 2048,
 		closed:     make(chan struct{}),
 	}
+}
+
+func (c *udpConnection) addr() net.Addr {
+	return c.socket.LocalAddr()
 }
 
 func (c *udpConnection) handle(msgType uint8, h packetHandler) {
@@ -140,8 +145,6 @@ func (c *udpConnection) listen(host string) (func(), error) {
 		return nil, err
 	}
 
-	log.Printf("address: %v\n", addr)
-
 	conn, err := net.ListenUDP("udp4", addr)
 	if err != nil {
 		return nil, err
@@ -179,7 +182,7 @@ func (c *udpConnection) LossSim(lossSim LossSimulator) {
 
 func sendTo(writer io.Writer, msg encoding.BinaryMarshaler) error {
 	header := MsgHeader{
-		version:   0,
+		version:   1,
 		optionLen: 0,
 	}
 
@@ -231,6 +234,10 @@ func newTestConnection() *testConnection {
 		cancel:   make(chan bool, 1),
 		recvChan: make(chan []byte, 100),
 	}
+}
+
+func (c *testConnection) addr() net.Addr {
+	return nil
 }
 
 func (c *testConnection) handle(msgType uint8, h packetHandler) {

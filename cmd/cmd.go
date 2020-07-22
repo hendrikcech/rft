@@ -80,6 +80,10 @@ var rootCmd = &cobra.Command{
 			log.Println("finish write")
 		}
 
+		// TODO: remove. Without this not all goroutines are finishing. For example,
+		// waitForCloseConnection does not process the write to the done channel by
+		// the last processed FileResponse.
+		time.Sleep(1 * time.Millisecond)
 	},
 }
 

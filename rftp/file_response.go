@@ -2,7 +2,6 @@ package rftp
 
 import (
 	"container/heap"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -107,16 +106,20 @@ func (f *FileResponse) getResendEntries(max int) *resendData {
 }
 
 func (f *FileResponse) write(done chan<- uint16) {
-	log.Printf("start writing file %v\n", f.index)
-	defer log.Printf("finished writing file %v\n", f.index)
+	log.Printf("Start processing file %v\n", f.index)
+	defer func() {
+		done <- f.index
+		f.pwriter.Close()
+		log.Printf("Finished processing file %v\n", f.index)
+	}()
 	for {
 		select {
 		case metadata := <-f.mc:
 			f.lock.Lock()
+			log.Printf("metadata: %+v\n", metadata)
 			if metadata.status != noErr {
 				f.err = fmt.Errorf("Server returned error for file %d: status %s",
 					f.index, metadata.status.String())
-				f.pwriter.Close()
 				return
 			}
 			f.size = metadata.size
@@ -150,18 +153,13 @@ func (f *FileResponse) write(done chan<- uint16) {
 			f.drainBuffer()
 
 		case <-f.cc:
-			log.Println("abort file writer")
 			f.drainBuffer()
-			f.err = errors.New("Write canceled")
-			f.pwriter.Close()
+			f.err = fmt.Errorf("Write canceled")
 			return
 		}
 
 		log.Printf("file %v at head %v and buffer size %v\n", f.index, f.head, f.buffer.Len())
 		if f.metadata && f.head >= f.chunks && f.buffer.Len() == 0 {
-			done <- f.index
-			f.pwriter.Close()
-			log.Println("done, leaving writer")
 			return
 		}
 	}

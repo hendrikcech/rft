@@ -83,28 +83,27 @@ var rootCmd = &cobra.Command{
 
 		for i, req := range reqs {
 			var w io.Writer
-			// TODO: verify checksum: method on req?
 			if out == "-" {
 				w = os.Stdout
 			} else {
 				path := filepath.Join(out, files[i])
-				log.Printf("Write to %s, %s, %s", path, out, files[i])
 				w, err = os.OpenFile(path, os.O_WRONLY|os.O_CREATE, 0644)
 				if err != nil {
 					log.Printf("Can't write file to %s: %s", path, err)
 					return
 				}
 			}
+
 			io.Copy(w, req)
 
-			if !req.ChecksumValid() {
-				log.Printf("Checksum of %s is NOT valid", files[i])
+			if req.Err != nil {
+				log.Printf("File %s error: %s", files[i], err)
 			} else {
-				log.Printf("Checksum of %s is valid", files[i])
+				log.Printf("File %s received (checksum is valid)", files[i])
 			}
 		}
 
-		// TODO: remove. Without this not all goroutines are finishing. For example,
+		// Without this not all goroutines are finishing. For example,
 		// waitForCloseConnection does not process the write to the done channel by
 		// the last processed FileResponse.
 		time.Sleep(1 * time.Millisecond)
@@ -160,23 +159,26 @@ func directoryHandler(dirname string) (rftp.FileHandler, error) {
 }
 
 func init() {
-	rootCmd.PersistentFlags().BoolVarP(&s, "server", "s", false, `server mode:
-accept incoming files from any host Operate in client mode if “–s” is not
-specified`)
+	rootCmd.PersistentFlags().BoolVarP(&s, "server", "s", false,
+		`server mode: accept incoming files from any host. Operate in client mode if
+“–s” is not specified.`)
 
 	rootCmd.PersistentFlags().IntVarP(&t, "port", "t", 0, "specify the port number to use")
 
-	rootCmd.PersistentFlags().Float32VarP(&p, "p", "p", -1, `specify the loss
-probabilities for the Markov chain model (0 <= p <= 1) if only one is specified,
-assume p=q; if neither is specified assume no loss`)
+	rootCmd.PersistentFlags().Float32VarP(&p, "p", "p", -1,
+		`specify the loss probabilities for the Markov chain model (0 <= p <= 1). If
+only one is specified, assume p=q; if neither is specified assume no loss`)
 
-	rootCmd.PersistentFlags().Float32VarP(&q, "q", "q", -1, `specify the loss
-probabilities for the Markov chain model (0 <= p <= 1) if only one is specified,
-assume p=q; if neither is specified assume no loss`)
+	rootCmd.PersistentFlags().Float32VarP(&q, "q", "q", -1,
+		`specify the loss probabilities for the Markov chain model (0 <= p <= 1). If
+only one is specified, assume p=q; if neither is specified assume no loss`)
 
-	rootCmd.PersistentFlags().StringVarP(&out, "out", "o", ".", `specify the
-	directory in which the requested files are going to be stored; set to '-' to
-	redirect file content to stdout`)
+	rootCmd.PersistentFlags().StringVarP(&out, "out", "o", ".",
+		`specify the directory in which the requested files are going to be stored;
+set to '-' to redirect file content to stdout`)
+
+	rootCmd.Flags().SortFlags = false
+	rootCmd.PersistentFlags().SortFlags = false
 }
 
 func Execute() {

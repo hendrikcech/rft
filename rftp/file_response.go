@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"container/heap"
 	"crypto/md5"
-	"errors"
 	"fmt"
 	"hash"
 	"io"
@@ -12,6 +11,8 @@ import (
 	"sort"
 	"sync"
 )
+
+var dummyError error = fmt.Errorf("dummy error")
 
 type FileResponse struct {
 	index uint16
@@ -32,7 +33,7 @@ type FileResponse struct {
 	size     uint64
 	chunks   uint64
 	checksum [16]byte
-	err      error
+	Err      error
 }
 
 func newFileResponse(index uint16) *FileResponse {
@@ -54,22 +55,25 @@ func newFileResponse(index uint16) *FileResponse {
 }
 
 func (f *FileResponse) Read(p []byte) (n int, err error) {
-	n, err = f.preader.Read(p)
-	if err != nil {
-		return
+	n, readErr := f.preader.Read(p)
+	_, hashErr := f.hasher.Write(p[:n])
+	if readErr == io.EOF || readErr == dummyError {
+		if !bytes.Equal(f.checksum[:], f.hasher.Sum(nil)[:16]) {
+			f.lock.Lock()
+			if f.Err == nil {
+				f.Err = fmt.Errorf("Checksum validation failed")
+			}
+			f.lock.Unlock()
+		}
 	}
-	_, err = f.hasher.Write(p[:n])
-	if err != nil {
-		return
+
+	log.Printf("fr Read: err %v", readErr)
+	if readErr != nil {
+		err = readErr
+	} else if hashErr != nil {
+		err = hashErr
 	}
 	return
-}
-
-// Returns true iff the checksum of the received file matches the checksum
-// transmitted in the metadata message. Returns false while the file is still in
-// transit.
-func (f *FileResponse) ChecksumValid() bool {
-	return bytes.Compare(f.checksum[:], f.hasher.Sum(nil)[:16]) == 0
 }
 
 type resendData struct {
@@ -130,16 +134,19 @@ func (f *FileResponse) write(done chan<- uint16) {
 	log.Printf("Start processing file %v\n", f.index)
 	defer func() {
 		done <- f.index
-		f.pwriter.Close()
+		// If simply Close() (or equivalently CloseWithError(nil) is called, preader
+		// never returns err=io.EOF and cmd.go hangs in io.Copy(w, req). Test case:
+		// request not-existing file.
+		f.pwriter.CloseWithError(dummyError)
+		// f.pwriter.Close()
 		log.Printf("Finished processing file %v\n", f.index)
 	}()
 	for {
 		select {
 		case metadata := <-f.mc:
 			f.lock.Lock()
-			log.Printf("metadata: %+v\n", metadata)
 			if metadata.status != noErr {
-				f.err = fmt.Errorf("Server returned error for file %d: status %s",
+				f.Err = fmt.Errorf("Server returned error for file %d: status %s",
 					f.index, metadata.status.String())
 				return
 			}
@@ -175,7 +182,7 @@ func (f *FileResponse) write(done chan<- uint16) {
 
 		case <-f.cc:
 			f.drainBuffer()
-			f.err = fmt.Errorf("Write canceled")
+			f.Err = fmt.Errorf("Write canceled")
 			return
 		}
 

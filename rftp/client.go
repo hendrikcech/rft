@@ -101,8 +101,8 @@ func (c *Client) waitForCloseConnection() {
 		select {
 		case i := <-c.done:
 			fr := c.responses[i]
-			if fr.err != nil {
-				log.Printf("Transfer of file %v aborted: %s", i, fr.err)
+			if fr.Err != nil {
+				log.Printf("Transfer of file %v aborted: %s", i, fr.Err)
 			}
 			done++
 			if done == len(c.responses) {

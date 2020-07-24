@@ -1,8 +1,11 @@
 package rftp
 
 import (
+	"bytes"
 	"container/heap"
+	"crypto/md5"
 	"fmt"
+	"hash"
 	"io"
 	"log"
 	"sort"
@@ -23,11 +26,12 @@ type FileResponse struct {
 	head          uint64
 	metadata      bool
 	lock          sync.Mutex
+	hasher        hash.Hash
 
 	size     uint64
 	chunks   uint64
 	checksum [16]byte
-	err      error
+	Err      error
 }
 
 func newFileResponse(index uint16) *FileResponse {
@@ -44,11 +48,28 @@ func newFileResponse(index uint16) *FileResponse {
 		pwriter:       w,
 		buffer:        newChunkQueue(index),
 		resendEntries: make(map[uint64]struct{}),
+		hasher:        md5.New(),
 	}
 }
 
 func (f *FileResponse) Read(p []byte) (n int, err error) {
-	return f.preader.Read(p)
+	n, readErr := f.preader.Read(p)
+	_, hashErr := f.hasher.Write(p[:n])
+	if readErr == io.EOF {
+		if !bytes.Equal(f.checksum[:], f.hasher.Sum(nil)[:16]) {
+			f.lock.Lock()
+			if f.Err == nil {
+				f.Err = fmt.Errorf("Checksum validation failed")
+			}
+			f.lock.Unlock()
+		}
+	}
+	if readErr != nil {
+		err = readErr
+	} else if hashErr != nil {
+		err = hashErr
+	}
+	return
 }
 
 type resendData struct {
@@ -116,10 +137,10 @@ func (f *FileResponse) write(done chan<- uint16) {
 		select {
 		case metadata := <-f.mc:
 			f.lock.Lock()
-			log.Printf("metadata: %+v\n", metadata)
 			if metadata.status != noErr {
-				f.err = fmt.Errorf("Server returned error for file %d: status %s",
+				f.Err = fmt.Errorf("Server returned error for file %d: status %s",
 					f.index, metadata.status.String())
+				f.lock.Unlock()
 				return
 			}
 			f.size = metadata.size
@@ -154,7 +175,7 @@ func (f *FileResponse) write(done chan<- uint16) {
 
 		case <-f.cc:
 			f.drainBuffer()
-			f.err = fmt.Errorf("Write canceled")
+			f.Err = fmt.Errorf("Write canceled")
 			return
 		}
 

@@ -12,8 +12,6 @@ import (
 	"sync"
 )
 
-var dummyError error = fmt.Errorf("dummy error")
-
 type FileResponse struct {
 	index uint16
 
@@ -57,7 +55,7 @@ func newFileResponse(index uint16) *FileResponse {
 func (f *FileResponse) Read(p []byte) (n int, err error) {
 	n, readErr := f.preader.Read(p)
 	_, hashErr := f.hasher.Write(p[:n])
-	if readErr == io.EOF || readErr == dummyError {
+	if readErr == io.EOF {
 		if !bytes.Equal(f.checksum[:], f.hasher.Sum(nil)[:16]) {
 			f.lock.Lock()
 			if f.Err == nil {
@@ -66,8 +64,6 @@ func (f *FileResponse) Read(p []byte) (n int, err error) {
 			f.lock.Unlock()
 		}
 	}
-
-	log.Printf("fr Read: err %v", readErr)
 	if readErr != nil {
 		err = readErr
 	} else if hashErr != nil {
@@ -134,11 +130,7 @@ func (f *FileResponse) write(done chan<- uint16) {
 	log.Printf("Start processing file %v\n", f.index)
 	defer func() {
 		done <- f.index
-		// If simply Close() (or equivalently CloseWithError(nil) is called, preader
-		// never returns err=io.EOF and cmd.go hangs in io.Copy(w, req). Test case:
-		// request not-existing file.
-		f.pwriter.CloseWithError(dummyError)
-		// f.pwriter.Close()
+		f.pwriter.Close()
 		log.Printf("Finished processing file %v\n", f.index)
 	}()
 	for {
@@ -148,6 +140,7 @@ func (f *FileResponse) write(done chan<- uint16) {
 			if metadata.status != noErr {
 				f.Err = fmt.Errorf("Server returned error for file %d: status %s",
 					f.index, metadata.status.String())
+				f.lock.Unlock()
 				return
 			}
 			f.size = metadata.size

@@ -97,7 +97,7 @@ var rootCmd = &cobra.Command{
 			io.Copy(w, req)
 
 			if req.Err != nil {
-				log.Printf("File %s error: %s", files[i], err)
+				log.Printf("File %s error: %s", files[i], req.Err)
 			} else {
 				log.Printf("File %s received (checksum is valid)", files[i])
 			}

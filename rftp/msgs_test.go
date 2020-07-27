@@ -34,6 +34,17 @@ func TestMsgHeaderMarshalling(t *testing.T) {
 
 			hdrLen: 3,
 		},
+		"option1": {
+			version:   0,
+			msgType:   0,
+			optionLen: 2,
+			options: []option{
+				{0, 5, []byte{1, 2, 3, 4, 5}},
+				{1, 0, []byte{}},
+			},
+
+			hdrLen: 12,
+		},
 	}
 
 	for name, tc := range tests {

@@ -47,11 +47,27 @@ type option struct {
 }
 
 func (o *option) UnmarshalBinary(data []byte) error {
-	panic("not implemented") // TODO: Implement
+	if len(data) < 2 {
+		return fmt.Errorf("Option too short")
+	}
+
+	o.otype = data[0]
+	o.length = data[1]
+	o.value = data[2:]
+
+	if int(o.length) != len(data)-2 {
+		return fmt.Errorf("Option specifies wrong length: expected %d, actually %d", o.length, len(data)-2)
+	}
+
+	return nil
 }
 
 func (o *option) MarshalBinary() (data []byte, err error) {
-	panic("not implemented") // TODO: Implement
+	buf := make([]byte, 1+1+len(o.value))
+	buf[0] = o.otype
+	buf[1] = o.length
+	copy(buf[2:], o.value)
+	return buf, nil
 }
 
 type MsgHeader struct {
@@ -99,9 +115,23 @@ func (s *MsgHeader) UnmarshalBinary(data []byte) error {
 	s.msgType = vt & 0x0F
 	s.ackNum = uint8(data[1])
 	s.optionLen = uint8(data[2])
+	if s.optionLen > 0 {
+		s.options = make([]option, s.optionLen)
+	}
 
-	// TODO: Parse options and fix hdrLen
 	s.hdrLen = 3
+
+	lens := data[3:]
+	for i := 0; uint8(i) < s.optionLen; i++ {
+		o := option{}
+		oend := 2 + int(lens[1])
+		if err := o.UnmarshalBinary(lens[:oend]); err != nil {
+			return err
+		}
+		s.options[i] = o
+		s.hdrLen += oend
+		lens = lens[oend:]
+	}
 
 	return nil
 }

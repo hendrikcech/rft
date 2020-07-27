@@ -47,6 +47,8 @@ type udpConnection struct {
 	closing bool
 }
 
+var _ connection = (*udpConnection)(nil)
+
 type responseWriter func([]byte) (int, error)
 
 func (rw responseWriter) Write(bs []byte) (int, error) {
@@ -220,6 +222,8 @@ type testConnection struct {
 	recvChan chan []byte // content is delivered to application, i.e., the test should fill this
 }
 
+var _ connection = (*testConnection)(nil)
+
 func newTestConnection() *testConnection {
 	return &testConnection{
 		handlers: make(map[uint8]packetHandler),
@@ -301,7 +305,7 @@ func (c testConnection) send(msg encoding.BinaryMarshaler) error {
 	return nil
 }
 
-func (c testConnection) cclose(timeout *time.Timer) error {
+func (c testConnection) cclose(timeout time.Duration) error {
 	return nil
 }
 

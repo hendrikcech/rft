@@ -48,7 +48,7 @@ type option struct {
 
 func (o *option) UnmarshalBinary(data []byte) error {
 	if len(data) < 2 {
-		return fmt.Errorf("Option too short")
+		return fmt.Errorf("option too short")
 	}
 
 	o.otype = data[0]

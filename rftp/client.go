@@ -167,6 +167,9 @@ func (c *Client) sendAcks(conn connection) {
 				if rd.res != nil {
 					res = append(res, rd.res...)
 				}
+				if index == maxFile {
+					maxOff = rd.head
+				}
 				if index > maxFile && rd.started {
 					maxFile = index
 					maxOff = rd.head

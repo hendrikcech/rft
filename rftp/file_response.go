@@ -156,7 +156,13 @@ func (f *FileResponse) write(done chan<- uint16) {
 		case payload := <-f.pc:
 			log.Printf("fileresponse received payload %v\n", payload.offset)
 			if payload.offset == f.head {
-				f.pwriter.Write(payload.data)
+				if f.metadata && payload.offset == f.chunks-1 {
+					log.Printf("writing last chunk")
+					lastSize := f.size - (f.chunks-1)*1024
+					f.pwriter.Write(payload.data[:lastSize])
+				} else {
+					f.pwriter.Write(payload.data)
+				}
 				f.lock.Lock()
 				delete(f.resendEntries, f.head)
 				f.head++
@@ -194,7 +200,13 @@ func (f *FileResponse) drainBuffer() {
 	for top <= f.head && f.buffer.Len() > 0 {
 		payload := heap.Pop(f.buffer).(*ServerPayload)
 		if top == f.head {
-			f.pwriter.Write(payload.data)
+			if f.metadata && payload.offset == f.chunks-1 {
+				log.Printf("writing last chunk")
+				lastSize := f.size - (f.chunks-1)*1024
+				f.pwriter.Write(payload.data[:lastSize])
+			} else {
+				f.pwriter.Write(payload.data)
+			}
 			delete(f.resendEntries, f.head)
 			f.head++
 		}

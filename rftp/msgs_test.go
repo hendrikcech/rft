@@ -2,7 +2,6 @@ package rftp
 
 import (
 	"encoding"
-	"log"
 	"reflect"
 	"testing"
 )
@@ -39,8 +38,8 @@ func TestMsgHeaderMarshalling(t *testing.T) {
 			msgType:   0,
 			optionLen: 2,
 			options: []option{
-				{0, 5, []byte{1, 2, 3, 4, 5}},
-				{1, 0, []byte{}},
+				{8, []byte{1, 2, 3, 4, 5}, 7},
+				{9, []byte{}, 2},
 			},
 
 			hdrLen: 12,
@@ -131,14 +130,20 @@ func TestAcknowledgementMarshalling(t *testing.T) {
 }
 
 func testConversion(t *testing.T, a UnMarshalBinary, b UnMarshalBinary) {
-	bin, err := a.MarshalBinary()
-	log.Printf("%v\n", bin)
+	binA, err := a.MarshalBinary()
 	checkErr(t, err)
 
-	err = b.UnmarshalBinary(bin)
+	err = b.UnmarshalBinary(binA)
 	checkErr(t, err)
 
 	if !reflect.DeepEqual(a, b) {
 		t.Errorf("%+v != %+v", a, b)
+	}
+
+	binB, err := b.MarshalBinary()
+	checkErr(t, err)
+
+	if !reflect.DeepEqual(binA, binB) {
+		t.Errorf("%+v != %+v", binA, binB)
 	}
 }

@@ -41,9 +41,13 @@ func (m MetaDataStatus) String() string {
 }
 
 type option struct {
-	otype  uint8
-	length uint8
-	value  []byte
+	otype uint8
+	value []byte
+
+	// Length of serialized struct in byte. Is not used during serialization,
+	// i.e., it does not need to be set if a new struct is populated and //
+	// serialized.
+	length int
 }
 
 func (o *option) UnmarshalBinary(data []byte) error {
@@ -52,20 +56,21 @@ func (o *option) UnmarshalBinary(data []byte) error {
 	}
 
 	o.otype = data[0]
-	o.length = data[1]
-	o.value = data[2:]
-
-	if int(o.length) != len(data)-2 {
-		return fmt.Errorf("Option specifies wrong length: expected %d, actually %d", o.length, len(data)-2)
+	valueLen := uint8(data[1])
+	o.length = 2 + int(valueLen)
+	if len(data) < o.length {
+		return fmt.Errorf("data slice too small: expected %d, got %d",
+			o.length, len(data))
 	}
+	o.value = data[2:o.length]
 
 	return nil
 }
 
 func (o *option) MarshalBinary() (data []byte, err error) {
-	buf := make([]byte, 1+1+len(o.value))
+	buf := make([]byte, 2+len(o.value))
 	buf[0] = o.otype
-	buf[1] = o.length
+	buf[1] = byte(len(o.value))
 	copy(buf[2:], o.value)
 	return buf, nil
 }
@@ -124,13 +129,12 @@ func (s *MsgHeader) UnmarshalBinary(data []byte) error {
 	lens := data[3:]
 	for i := 0; uint8(i) < s.optionLen; i++ {
 		o := option{}
-		oend := 2 + int(lens[1])
-		if err := o.UnmarshalBinary(lens[:oend]); err != nil {
+		if err := o.UnmarshalBinary(lens); err != nil {
 			return err
 		}
 		s.options[i] = o
-		s.hdrLen += oend
-		lens = lens[oend:]
+		s.hdrLen += o.length
+		lens = lens[o.length:]
 	}
 
 	return nil

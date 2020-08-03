@@ -30,14 +30,18 @@ const (
 
 func (m MetaDataStatus) String() string {
 	switch uint8(m) {
+	case 0:
+		return "0: no error"
 	case 1:
 		return "1: file does not exist"
 	case 2:
 		return "2: file is empty"
 	case 3:
 		return "3: access denied"
+	case 4:
+		return "4: Offset bigger than filesize"
 	}
-	return "0: no error"
+	return fmt.Sprintf("unknown error: %v", uint8(m))
 }
 
 type option struct {

@@ -8,21 +8,13 @@ Directory structure:
 
 | Directory       | Purpose       |
 |-----------------|-----------------------------------------------------------------------------------------------|
-| `assignment1`   | Contains documentation and RFC Internet Draft for the RFT protocol                            |
 | `cmd`           | Contains cli utilities to run a RFT server or client                                          |
-| `docs`          | Contains meeting notes                                                                        |
-| `misc`          | Contains useful content like reference programs that are not (yet) directly used in our work  |
 | `rft`           | Contains a reference implementation for RFT written as golang library                         |
 
 
 ## Specification
 
-The RFT-specification is written in the Internet-Draft style of the IETF RFCs.
-The specification is written as Markdown in `assignment1/draft-rft.md` and then
-compiled to XML using [mmark](https://github.com/mmarkdown/mmark/) and from xml to text or html using [xml2rfc](https://xml2rfc.tools.ietf.org/).
-
-To compile the document, make sure to install these dependencies and then use
-the `compile-md` script.
+The RFT-specification is written in a separate (currently closed source) repository.
 
 ## Implementation
 
@@ -45,9 +37,9 @@ server and executes some test file transmissions. It can be used like this:
 
 ```shell
 go build
-go run main_integration.go
+./rft bench <rftbinary1> <rftbinary2>
 ```
 
-If you want to use a different `rft` executable than the one provided by this
-repository, just replace `go build` by `cp <your/rft/binary> .`, to copy it to
-this directory before running the test runner.
+With *rftbinary1* and *rftbinary2* being 2 implementations which will be tested
+against each other.
+

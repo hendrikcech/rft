@@ -116,7 +116,8 @@ func (c *udpConnection) receive() error {
 
 		header := &MsgHeader{}
 		if err := header.UnmarshalBinary(msg); err != nil {
-			// TODO: Is log, drop packet and continue enough? Maybe send close?
+			// Some wisdom: "Be conservative in what you do, be liberal in what you
+			// accept from others."
 			log.Printf("error while unmarshalling packet header: %v\n", err)
 			continue
 		}

@@ -446,8 +446,40 @@ func (c *ClientAck) UnmarshalBinary(data []byte) error {
 	return nil
 }
 
+type CloseConnectionReason uint16
+
+const (
+	noReason CloseConnectionReason = iota
+	applicationClosed
+	unsupportedVersion
+	unknownRequest
+	wrongChecksum
+	donwloadFinished
+	timeout
+)
+
+func (m CloseConnectionReason) String() string {
+	switch uint8(m) {
+	case 0:
+		return "0: no reason provided"
+	case 1:
+		return "1: application closed"
+	case 2:
+		return "2: unsupported version"
+	case 3:
+		return "3: unknown request"
+	case 4:
+		return "4: wrong checksum"
+	case 5:
+		return "5: download finished"
+	case 6:
+		return "6: timeout"
+	}
+	return fmt.Sprintf("unknown reason: %v", uint8(m))
+}
+
 type CloseConnection struct {
-	reason uint16
+	reason CloseConnectionReason
 }
 
 func (c CloseConnection) MarshalBinary() ([]byte, error) {
@@ -460,6 +492,6 @@ func (c CloseConnection) MarshalBinary() ([]byte, error) {
 }
 
 func (c *CloseConnection) UnmarshalBinary(data []byte) error {
-	c.reason = binary.BigEndian.Uint16(data[:2])
+	c.reason = CloseConnectionReason(binary.BigEndian.Uint16(data[:2]))
 	return nil
 }

@@ -134,7 +134,11 @@ func (c *udpConnection) receive() error {
 		go func() {
 			defer wg.Done()
 			//time.Sleep(1 * time.Second)
-			c.handlers[header.msgType].handle(rw, p)
+			if handler, ok := c.handlers[header.msgType]; !ok {
+				log.Printf("no handler for message type %d\n", header.msgType)
+			} else {
+				handler.handle(rw, p)
+			}
 		}()
 	}
 }

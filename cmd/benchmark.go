@@ -19,13 +19,15 @@ import (
 type testfile struct {
 	size int64
 	name string
+
+	timeout time.Duration
 }
 
 var testfiles = []testfile{
-	//{size: 0},
-	{size: 10},
-	{size: 10 * 100},
-	//	{size: 100 * 1024},
+	{size: 0, timeout: 2 * time.Second},
+	{size: 10, timeout: 2 * time.Second},
+	{size: 1 * 1000, timeout: 2 * time.Second},
+	{size: 100 * 1024, timeout: 15 * time.Second},
 	//	{size: 1000 * 1024},
 }
 
@@ -66,7 +68,7 @@ func (r *runner) setup() error {
 		if err != nil {
 			return err
 		}
-		r.tf = append(r.tf, testfile{size: fi.Size(), name: fi.Name()})
+		r.tf = append(r.tf, testfile{size: fi.Size(), name: fi.Name(), timeout: tf.timeout})
 
 		if err := file.Close(); err != nil {
 			return err
@@ -166,13 +168,12 @@ var benchCmd = &cobra.Command{
 					done <- clientCMD.Wait()
 				}()
 
-				timeout := time.Duration(3*tf.size) * time.Millisecond
 				select {
-				case <-time.After(timeout):
+				case <-time.After(tf.timeout):
 					if err := clientCMD.Process.Kill(); err != nil {
 						log.Printf("failed to kill client process: %v", err)
 					} else {
-						log.Printf("killed client process after timeout: %v", timeout)
+						log.Printf("killed client process after timeout: %v", tf.timeout)
 					}
 				case err := <-done:
 					if err != nil {
@@ -213,8 +214,8 @@ var benchCmd = &cobra.Command{
 				log.Fatal(err)
 			}
 
-			time.Sleep(2 * time.Second)
-			log.Println()
+			time.Sleep(1 * time.Second)
+			fmt.Println()
 		}
 	},
 }

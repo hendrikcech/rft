@@ -32,9 +32,11 @@ type clientConnection struct {
 	cclose        chan *CloseConnection
 	socket        io.Writer
 
-	metadataCache map[uint16]*ServerMetaData
-	payloadCache  map[uint16]map[uint64]*ServerPayload
-	cacheLock     sync.Mutex
+	cleaner Cleaner
+
+	metadataCache    map[uint16]*ServerMetaData
+	payloadCache     map[uint16]map[uint64]*ServerPayload
+	payloadCacheLock sync.Mutex
 }
 
 func (c *clientConnection) writeResponse() {
@@ -44,11 +46,20 @@ func (c *clientConnection) writeResponse() {
 	rateControl.start()
 	defer rateControl.stop()
 
-	for {
+	handleAck := func(ack *ClientAck) {
+		lastAck = ack.ackNumber
+		rateControl.onAck(ack)
+		c.reschedule <- ack
+	}
+
+	closeChan := c.cleaner.subscribe()
+
+	for !c.cleaner.closed() {
 		var err error
 
-		if rateControl.isAvailable() {
+		c.cleaner.refresh(5 * time.Second) // TODO: replace by 500 + RTT * 3 or something
 
+		if rateControl.isAvailable() {
 			select {
 			case pl := <-c.resend:
 				log.Printf("resending payload for file %v at offset %v\n", pl.fileIndex, pl.offset)
@@ -58,10 +69,7 @@ func (c *clientConnection) writeResponse() {
 				continue
 
 			case ack := <-c.ack:
-				// TODO: duplicate ACK block
-				lastAck = ack.ackNumber
-				rateControl.onAck(ack)
-				c.reschedule <- ack
+				handleAck(ack)
 
 			default:
 			}
@@ -87,21 +95,19 @@ func (c *clientConnection) writeResponse() {
 				rateControl.onSend()
 
 			case ack := <-c.ack:
-				// TODO: duplicate ACK block
-				lastAck = ack.ackNumber
-				rateControl.onAck(ack)
-				c.reschedule <- ack
+				handleAck(ack)
+
+			case <-closeChan:
+				return
 			}
 		} else {
 			select {
 			case <-rateControl.awaitAvailable():
 				continue
 			case ack := <-c.ack:
-				//log.Printf("received ack: %v\n", ack)
-				// TODO: duplicate ACK block
-				lastAck = ack.ackNumber
-				rateControl.onAck(ack)
-				c.reschedule <- ack
+				handleAck(ack)
+			case <-closeChan:
+				return
 			}
 		}
 
@@ -115,8 +121,8 @@ func (c *clientConnection) writeResponse() {
 // explicit acks per file, so we have to calculate it, to avoid keeping all
 // files in the cache.
 func (c *clientConnection) saveToCache(p *ServerPayload) {
-	c.cacheLock.Lock()
-	defer c.cacheLock.Unlock()
+	c.payloadCacheLock.Lock()
+	defer c.payloadCacheLock.Unlock()
 	_, ok := c.payloadCache[p.fileIndex]
 	if !ok {
 		c.payloadCache[p.fileIndex] = make(map[uint64]*ServerPayload)
@@ -126,8 +132,8 @@ func (c *clientConnection) saveToCache(p *ServerPayload) {
 }
 
 func (c *clientConnection) getFromCache(file uint16, offset uint64) (*ServerPayload, bool) {
-	c.cacheLock.Lock()
-	defer c.cacheLock.Unlock()
+	c.payloadCacheLock.Lock()
+	defer c.payloadCacheLock.Unlock()
 
 	if c, ok := c.payloadCache[file]; ok {
 		if p, ok := c[offset]; ok {
@@ -138,49 +144,54 @@ func (c *clientConnection) getFromCache(file uint16, offset uint64) (*ServerPayl
 }
 
 func (c *clientConnection) rescheduler() {
-
-	for ack := range c.reschedule {
-		// use a map to avoid duplicates in metadata resend entries
-		metadata := map[uint16]struct{}{}
-		if ack.status != 0 {
-			metadata[ack.fileIndex] = struct{}{}
-		}
-
-		sort.Sort(&ack.resendEntries)
-		log.Printf("rescheduling sorted ack: %v\n", ack)
-		for i, re := range ack.resendEntries {
-			if uint32(i) > ack.maxTransmissionRate {
-				break
+	closeChan := c.cleaner.subscribe()
+	for {
+		select {
+		case <-closeChan:
+			return
+		case ack := <-c.reschedule:
+			// use a map to avoid duplicates in metadata resend entries
+			metadata := map[uint16]struct{}{}
+			if ack.status != 0 {
+				metadata[ack.fileIndex] = struct{}{}
 			}
-			if re.length == 0 {
-				metadata[re.fileIndex] = struct{}{}
-			}
-			if p, ok := c.getFromCache(re.fileIndex, re.offset); ok {
-				if re.length == 0 {
-					c.resend <- p
-					log.Printf("rescheduled payload for file: %v at offset: %v\n", p.fileIndex, p.offset)
+
+			sort.Sort(&ack.resendEntries)
+			log.Printf("rescheduling sorted ack: %v\n", ack)
+			for i, re := range ack.resendEntries {
+				if uint32(i) > ack.maxTransmissionRate {
+					break
 				}
-
-				for i := uint64(0); i < uint64(re.length); i++ {
-					if p, ok := c.getFromCache(re.fileIndex, re.offset+i); ok {
+				if re.length == 0 {
+					metadata[re.fileIndex] = struct{}{}
+				}
+				if p, ok := c.getFromCache(re.fileIndex, re.offset); ok {
+					if re.length == 0 {
 						c.resend <- p
 						log.Printf("rescheduled payload for file: %v at offset: %v\n", p.fileIndex, p.offset)
-					} else {
-						log.Printf("didn't find resend entry in cache: %v\n", re.offset+i)
-						break
-						// TODO:
-						// re-read from sectionReader, this isn't trivial either
-						// because we may have to avoid concurrent reads on the files
+					}
+
+					for i := uint64(0); i < uint64(re.length); i++ {
+						if p, ok := c.getFromCache(re.fileIndex, re.offset+i); ok {
+							c.resend <- p
+							log.Printf("rescheduled payload for file: %v at offset: %v\n", p.fileIndex, p.offset)
+						} else {
+							log.Printf("didn't find resend entry in cache: %v\n", re.offset+i)
+							break
+							// TODO:
+							// re-read from sectionReader, this isn't trivial either
+							// because we may have to avoid concurrent reads on the files
+						}
 					}
 				}
 			}
-		}
 
-		// resend metadata
-		for k := range metadata {
-			if m, ok := c.metadataCache[k]; ok {
-				log.Printf("rescheduled metadata for file: %v\n", k)
-				c.metadata <- m
+			// resend metadata
+			for k := range metadata {
+				if m, ok := c.metadataCache[k]; ok {
+					log.Printf("rescheduled metadata for file: %v\n", k)
+					c.metadata <- m
+				}
 			}
 		}
 	}
@@ -208,7 +219,13 @@ func (c *clientConnection) getResponse(fh FileHandler) {
 		})
 	}
 
+	closeChan := c.cleaner.subscribe()
+
 	for _, fr := range srs {
+		if c.cleaner.closed() {
+			return
+		}
+
 		if fr.sr == nil {
 			c.metadata <- &ServerMetaData{fileIndex: fr.index, status: fileNotExistent}
 			continue
@@ -239,7 +256,11 @@ func (c *clientConnection) getResponse(fh FileHandler) {
 				offset:    uint64(off),
 			}
 			off++
-			c.payload <- p
+			select {
+			case c.payload <- p:
+			case <-closeChan:
+				return
+			}
 		}
 
 		m := &ServerMetaData{fileIndex: fr.index, size: uint64(fr.sr.Size())}
@@ -250,6 +271,65 @@ func (c *clientConnection) getResponse(fh FileHandler) {
 
 func key(ip *net.UDPAddr) string {
 	return fmt.Sprintf("%v:%v", ip.IP, ip.Port)
+}
+
+type Cleaner struct {
+	closeLock   sync.RWMutex
+	subs        []chan struct{}
+	closedState bool
+
+	timeoutLock sync.Mutex
+	deadline    time.Time
+
+	cb func()
+}
+
+func (c *Cleaner) close() {
+	c.closeLock.Lock()
+	defer c.closeLock.Unlock()
+	if c.closedState {
+		return
+	}
+	c.closedState = true
+	for _, sub := range c.subs {
+		sub <- struct{}{}
+		close(sub)
+	}
+	c.cb()
+}
+
+func (c *Cleaner) closed() bool {
+	c.closeLock.RLock()
+	defer c.closeLock.RUnlock()
+	return c.closedState
+}
+
+func (c *Cleaner) refresh(d time.Duration) {
+	c.timeoutLock.Lock()
+	defer c.timeoutLock.Unlock()
+	c.deadline = time.Now().Add(d)
+}
+
+func (c *Cleaner) checkTimeout() {
+	c.timeoutLock.Lock()
+	defer c.timeoutLock.Unlock()
+	if time.Now().After(c.deadline) {
+		c.close()
+	} else if !c.closed() {
+		time.AfterFunc(time.Until(c.deadline), c.checkTimeout)
+	}
+}
+
+func (c *Cleaner) subscribe() <-chan struct{} {
+	c.closeLock.Lock()
+	defer c.closeLock.Unlock()
+	new := make(chan struct{}, 1)
+	c.subs = append(c.subs, new)
+	if c.closedState {
+		new <- struct{}{}
+		close(new)
+	}
+	return new
 }
 
 type Server struct {
@@ -310,11 +390,20 @@ func (s *Server) handleRequest(w io.Writer, p *packet) {
 			socket: w,
 			req:    cr,
 
+			cleaner: Cleaner{cb: func() {
+				s.clientMux.Lock()
+				defer s.clientMux.Unlock()
+				delete(s.clients, key)
+				log.Printf("Conn %v closed. Current number of connections: %v\n", key, len(s.clients))
+			}},
+
 			payloadCache:  make(map[uint16]map[uint64]*ServerPayload),
 			metadataCache: make(map[uint16]*ServerMetaData),
 		}
 		s.clients[key] = c
 		go c.getResponse(s.fh)
+		c.cleaner.refresh(5 * time.Second)
+		c.cleaner.checkTimeout()
 	} else {
 		// TODO: send close, because duplicate connection request
 	}
@@ -331,11 +420,9 @@ func (s *Server) handleACK(_ io.Writer, p *packet) {
 	key := key(p.remoteAddr)
 	s.clientMux.Lock()
 	defer s.clientMux.Unlock()
-	if _, ok := s.clients[key]; !ok {
-		// drop packet
-		return
+	if conn, ok := s.clients[key]; ok {
+		conn.ack <- ack
 	}
-	s.clients[key].ack <- ack
 }
 
 func (s *Server) handleClose(_ io.Writer, p *packet) {
@@ -345,4 +432,7 @@ func (s *Server) handleClose(_ io.Writer, p *packet) {
 		// TODO What now?
 		log.Println("failed to parse close")
 	}
+
+	log.Printf("connection closed: %s\n", cl.reason.String())
+	// TODO: clean up state
 }

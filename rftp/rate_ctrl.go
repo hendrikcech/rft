@@ -42,6 +42,7 @@ type aimd struct {
 	decreaseCoolOffPeriod uint8
 
 	resetTicker         *time.Ticker
+	closedTicker        chan struct{}
 	availableChan       chan struct{}
 	notifyAvailableLock sync.Mutex
 }
@@ -50,6 +51,7 @@ var _ RateControl = (*aimd)(nil)
 
 func (c *aimd) start() {
 	c.resetTicker = time.NewTicker(1 * time.Second)
+	c.closedTicker = make(chan struct{}, 1)
 	c.availableChan = make(chan struct{}, 1)
 	c.notifyAvailableLock = sync.Mutex{}
 
@@ -57,16 +59,18 @@ func (c *aimd) start() {
 		for {
 			atomic.StoreUint32(&c.sent, 0)
 			c.notifyAvailable()
-			_, ok := <-c.resetTicker.C
-			if !ok {
-				break
+			select {
+			case <-c.resetTicker.C:
+			case <-c.closedTicker:
+				return
 			}
 		}
 	}()
 }
 
 func (c *aimd) stop() {
-	c.resetTicker.Stop()
+	c.resetTicker.Stop() // does not close resetTicker.C
+	c.closedTicker <- struct{}{}
 }
 
 func (c *aimd) awaitAvailable() <-chan struct{} {

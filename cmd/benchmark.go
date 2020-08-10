@@ -24,11 +24,11 @@ type testfile struct {
 }
 
 var testfiles = []testfile{
-	{size: 0, timeout: 2 * time.Second},
-	{size: 10, timeout: 2 * time.Second},
-	{size: 1 * 1000, timeout: 2 * time.Second},
-	{size: 100 * 1024, timeout: 15 * time.Second},
-	//	{size: 1000 * 1024},
+	{size: 0, timeout: 5 * time.Second},
+	{size: 10, timeout: 5 * time.Second},
+	{size: 1 * 1000, timeout: 5 * time.Second},
+	{size: 100 * 1024, timeout: 20 * time.Second},
+	{size: 1000 * 1024, timeout: 1 * time.Minute},
 }
 
 type runner struct {

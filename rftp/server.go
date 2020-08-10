@@ -158,8 +158,15 @@ func (c *clientConnection) rescheduler() {
 
 			sort.Sort(&ack.resendEntries)
 			log.Printf("rescheduling sorted ack: %v\n", ack)
+
+			if len(ack.resendEntries) <= 0 {
+				if p, ok := c.getFromCache(ack.fileIndex, ack.offset); ok {
+					c.resend <- p
+					log.Printf("rescheduled payload for file: %v at offset: %v\n", p.fileIndex, p.offset)
+				}
+			}
 			for i, re := range ack.resendEntries {
-				if uint32(i) > ack.maxTransmissionRate {
+				if ack.maxTransmissionRate > 0 && uint32(i) > ack.maxTransmissionRate {
 					break
 				}
 				if re.length == 0 {

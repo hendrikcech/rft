@@ -23,13 +23,27 @@ type testfile struct {
 	timeout time.Duration
 }
 
-var testfiles = []testfile{
+func (t testfile) String() string {
+	return fmt.Sprintf("size: %v, timeout: %v\n", t.size, t.timeout)
+}
+
+type tests []testfile
+
+func (t tests) String() string {
+	res := ""
+	for i, tt := range t {
+		res += fmt.Sprintf("\t%v: %v", i+1, tt)
+	}
+	return res
+}
+
+var testfiles = tests([]testfile{
 	{size: 0, timeout: 5 * time.Second},
 	{size: 10, timeout: 5 * time.Second},
 	{size: 1 * 1000, timeout: 5 * time.Second},
 	{size: 100 * 1024, timeout: 20 * time.Second},
 	{size: 1000 * 1024, timeout: 1 * time.Minute},
-}
+})
 
 type runner struct {
 	src  string
@@ -115,7 +129,20 @@ func getServerClientCombinations(binaries []string, p, q float32) []combination 
 var benchCmd = &cobra.Command{
 	Use:   "bench <rft1> <rft2>",
 	Short: "An automatic benchmark of rft implementations",
-	Args:  cobra.MinimumNArgs(2),
+	Long: fmt.Sprintf(`bench runs all combinations in which <rft1> and <rft2> can be used to
+download files from each other. Use the -r flag, to only run a
+specific combination. The order is deterministic:
+
+	1: <rft1-server><rft1-client>
+	2: <rft1-server><rft2-client>
+	3: <rft2-server><rft1-client>
+	4: <rft2-server><rft2-client>
+
+Use the -s flag to only run tests of a certain file, currently configured are:
+
+%v
+`, testfiles),
+	Args: cobra.MinimumNArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
 		log.Println(args)
 
@@ -129,7 +156,10 @@ var benchCmd = &cobra.Command{
 		}
 		cc := getServerClientCombinations([]string{binary1Path, binary2Path}, p, q)
 
-		for _, c := range cc {
+		for r, c := range cc {
+			if run != 0 && run != r+1 {
+				continue
+			}
 
 			r := runner{}
 			err = r.setup()
@@ -150,10 +180,15 @@ var benchCmd = &cobra.Command{
 				log.Fatalf("failed to create run test server: %v\n", err)
 			}
 
-			for _, tf := range r.tf {
+			for i, tf := range r.tf {
+				if size != 0 && size != i+1 {
+					continue
+				}
 				clientCMD := exec.Command(c.client[0], append(c.client[1:], tf.name)...)
 				clientCMD.Dir = r.dest
-				log.Printf("run client: %v\n", clientCMD.Args)
+				if i == 0 {
+					log.Printf("run client: %v\n", clientCMD.Args)
+				}
 				//clientCMD.Stdout = os.Stdout
 				//clientCMD.Stderr = os.Stderr
 
@@ -220,7 +255,12 @@ var benchCmd = &cobra.Command{
 	},
 }
 
+var run int
+var size int
+
 func init() {
+	benchCmd.Flags().IntVarP(&run, "run", "r", 0, "Specify which run should be executed, 0 runs all combinations")
+	benchCmd.Flags().IntVarP(&size, "size", "s", 0, "Specify which file size should be tested, 0 runs all configured sizes")
 	rootCmd.AddCommand(benchCmd)
 }
 

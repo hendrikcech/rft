@@ -119,13 +119,30 @@ func (f *FileResponse) getResendEntries(max int) *resendData {
 			offset:    f.head,
 			length:    0,
 		})
-	} else if f.head < f.chunks {
-		res = append(res, &ResendEntry{
-			fileIndex: f.index,
-			offset:    f.head,
-			length:    1,
-		})
 	}
+	// This would be a nice addition to force a server to be more aggressive,
+	// but does only work, when a server sends resend entries sorted from low to
+	// high. Otherwise the client get's stuck because it will repeatedly
+	// re-request these chunks and the server only always resends the same
+	// chunks.
+	//else if f.head < f.chunks {
+	//		l := f.chunks - f.head
+	//		for l > 255 {
+	//			res = append(res, &ResendEntry{
+	//				fileIndex: f.index,
+	//				offset:    f.head,
+	//				length:    255,
+	//			})
+	//			l -= 255
+	//		}
+	//		if l > 0 {
+	//			res = append(res, &ResendEntry{
+	//				fileIndex: f.index,
+	//				offset:    f.head,
+	//				length:    uint8(l),
+	//			})
+	//		}
+	//}
 	return &resendData{
 		started:    (f.head > 0) || f.buffer.Len() > 0,
 		metadata:   f.metadata,

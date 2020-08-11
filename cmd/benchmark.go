@@ -172,8 +172,10 @@ Use the -s flag to only run tests of a certain file, currently configured are:
 			serverCMD.Dir = r.src
 			log.Printf("run server: %v\n", serverCMD.Args)
 
-			//serverCMD.Stdout = os.Stdout
-			//serverCMD.Stderr = os.Stderr
+			if stdout {
+				serverCMD.Stdout = os.Stdout
+				serverCMD.Stderr = os.Stderr
+			}
 
 			err = serverCMD.Start()
 			if err != nil {
@@ -189,8 +191,10 @@ Use the -s flag to only run tests of a certain file, currently configured are:
 				if i == 0 {
 					log.Printf("run client: %v\n", clientCMD.Args)
 				}
-				//clientCMD.Stdout = os.Stdout
-				//clientCMD.Stderr = os.Stderr
+				if stdout {
+					clientCMD.Stdout = os.Stdout
+					clientCMD.Stderr = os.Stderr
+				}
 
 				start := time.Now()
 				err = clientCMD.Start()
@@ -257,10 +261,12 @@ Use the -s flag to only run tests of a certain file, currently configured are:
 
 var run int
 var size int
+var stdout bool
 
 func init() {
 	benchCmd.Flags().IntVarP(&run, "run", "r", 0, "Specify which run should be executed, 0 runs all combinations")
 	benchCmd.Flags().IntVarP(&size, "size", "s", 0, "Specify which file size should be tested, 0 runs all configured sizes")
+	benchCmd.Flags().BoolVarP(&stdout, "out", "o", false, "Print command output to stdout and stderr")
 	rootCmd.AddCommand(benchCmd)
 }
 

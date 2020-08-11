@@ -38,7 +38,7 @@ func NewMarkovLossSimulator(p float32, q float32) LossSimulator {
 func (l *MarkovLossSimulator) shouldDrop() bool {
 	x := rand.Float32() // upper bound is exclusive, i.e., never 1; problem?
 	if l.lossState {
-		if x >= 1-l.q {
+		if x >= l.q {
 			l.lossState = false
 		}
 	} else {

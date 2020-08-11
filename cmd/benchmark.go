@@ -101,8 +101,8 @@ func getServerClientCombinations(binaries []string) []combination {
 	for _, bs := range binaries {
 		for _, bc := range binaries {
 			c := combination{
-				server: []string{bs, "-s", "-q", "0.99", "-p", "0.01", "-t", "8080", "0.0.0.0"},
-				client: []string{bc, "localhost", "-q", "0.99", "-p", "0.01", "-t", "8080"},
+				server: []string{bs, "-s", "-q", "0.01", "-p", "0.01", "-t", "8080", "0.0.0.0"},
+				client: []string{bc, "localhost", "-q", "0.01", "-p", "0.01", "-t", "8080"},
 			}
 
 			cc = append(cc, c)

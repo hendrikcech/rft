@@ -140,7 +140,7 @@ func (c *Client) waitForFirstResponse(try int) error {
 }
 
 func (c *Client) sendAcks(conn connection) {
-	timeout := time.NewTimer(c.rtt)
+	timeout := time.NewTimer(500 * time.Millisecond)
 	ackSendMap := map[uint8]time.Time{}
 	nextAckNum := uint8(1)
 	lastPing := time.Now()
@@ -187,6 +187,7 @@ func (c *Client) sendAcks(conn connection) {
 				status:              status,
 			}
 			ackSendMap[nextAckNum] = time.Now()
+			log.Printf("sending ack: %v, %v\n", ack, ack.resendEntries)
 			c.Conn.send(ack)
 
 			nextAckNum++
@@ -194,7 +195,7 @@ func (c *Client) sendAcks(conn connection) {
 			if nextAckNum == 0 {
 				nextAckNum++
 			}
-			timeout = time.NewTimer(100 * c.rtt)
+			timeout = time.NewTimer(500 * time.Millisecond)
 
 		case ackNum := <-c.ack:
 			if send, ok := ackSendMap[ackNum]; ok {

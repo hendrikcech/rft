@@ -95,14 +95,14 @@ type combination struct {
 	server, client []string
 }
 
-func getServerClientCombinations(binaries []string) []combination {
+func getServerClientCombinations(binaries []string, p, q float32) []combination {
 	cc := []combination{}
 
 	for _, bs := range binaries {
 		for _, bc := range binaries {
 			c := combination{
-				server: []string{bs, "-s", "-q", "0.01", "-p", "0.01", "-t", "8080", "0.0.0.0"},
-				client: []string{bc, "localhost", "-q", "0.01", "-p", "0.01", "-t", "8080"},
+				server: []string{bs, "-s", "-q", fmt.Sprintf("%f", q), "-p", fmt.Sprintf("%f", p), "-t", "8080", "0.0.0.0"},
+				client: []string{bc, "localhost", "-q", fmt.Sprintf("%f", q), "-p", fmt.Sprintf("%f", p), "-t", "8080"},
 			}
 
 			cc = append(cc, c)
@@ -127,7 +127,7 @@ var benchCmd = &cobra.Command{
 		if err != nil {
 			log.Fatalf("failed to set rft path: %v\n", err)
 		}
-		cc := getServerClientCombinations([]string{binary1Path, binary2Path})
+		cc := getServerClientCombinations([]string{binary1Path, binary2Path}, p, q)
 
 		for _, c := range cc {
 

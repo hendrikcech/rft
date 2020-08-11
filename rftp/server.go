@@ -152,7 +152,7 @@ func (c *clientConnection) rescheduler() {
 		case ack := <-c.reschedule:
 			// use a map to avoid duplicates in metadata resend entries
 			metadata := map[uint16]struct{}{}
-			if ack.status != 0 {
+			if ack.metaDataMissing {
 				metadata[ack.fileIndex] = struct{}{}
 			}
 

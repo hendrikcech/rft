@@ -13,7 +13,7 @@ import (
 )
 
 func print(done, queue, total uint64) {
-	fmt.Printf("\r%v/%v/%v", done, queue, total)
+	//fmt.Printf("\r%v/%v/%v", done, queue, total)
 }
 
 type FileResponse struct {

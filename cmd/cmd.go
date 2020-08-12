@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"os"
 
@@ -64,7 +63,7 @@ var rootCmd = &cobra.Command{
 		}
 
 		// uncomment to disable logging
-		log.SetOutput(ioutil.Discard)
+		//log.SetOutput(ioutil.Discard)
 		if info, err := os.Stat(out); out != "-" && (err != nil || !info.IsDir()) {
 			log.Printf("Invalid out path")
 			return

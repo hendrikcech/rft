@@ -1,7 +1,6 @@
 package rftp
 
 import (
-	"log"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -91,7 +90,7 @@ func (c *aimd) notifyAvailable() {
 // at this moment.
 func (c *aimd) isAvailable() bool {
 	sent := atomic.LoadUint32(&c.sent)
-	log.Printf("isAvailable: sent: %v, c.congRate: %v, c.flowRate: %v\n", sent, c.congRate, c.flowRate)
+	//	log.Printf("isAvailable: sent: %v, c.congRate: %v, c.flowRate: %v\n", sent, c.congRate, c.flowRate)
 	if c.flowRate > 0 {
 		return sent < c.congRate && sent < c.flowRate
 	}

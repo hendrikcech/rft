@@ -52,14 +52,13 @@ func (c *clientConnection) writeResponse() {
 		lastAck = ack.ackNumber
 		rateControl.onAck(ack)
 		c.reschedule <- ack
+		c.cleaner.refresh(5 * time.Second) // TODO: replace by 500 + RTT * 3 or something
 	}
 
 	closeChan := c.cleaner.subscribe()
 
 	for !c.cleaner.closed() {
 		var err error
-
-		c.cleaner.refresh(5 * time.Second) // TODO: replace by 500 + RTT * 3 or something
 
 		if rateControl.isAvailable() {
 			select {
@@ -407,7 +406,38 @@ func (s *Server) SetFileHandler(fh FileHandler) {
 	s.fh = fh
 }
 
+type unreliableWriter struct {
+	breakTime  time.Time
+	returnTime time.Time
+	w          io.Writer
+}
+
+func (u *unreliableWriter) Write(p []byte) (n int, err error) {
+	t := time.Now()
+	if u.breakTime.After(t) {
+		return u.w.Write(p)
+	}
+	if u.breakTime.After(t) && u.returnTime.Before(t) {
+		return u.w.Write(p)
+	}
+	return len(p), nil
+}
+
+func getUnreliableWriter(w io.Writer, x, y time.Duration) io.Writer {
+	return &unreliableWriter{
+		breakTime:  time.Now().Add(x),
+		returnTime: time.Now().Add(y),
+		w:          w,
+	}
+}
+
 func (s *Server) handleRequest(w io.Writer, p *packet) {
+
+	// Uncomment to get a network failure between x and y
+	//x := 5 * time.Second
+	//y := 20 * time.Second
+	//w = getUnreliableWriter(w, x, y)
+
 	cr := &ClientRequest{}
 	err := cr.UnmarshalBinary(p.data)
 	if err != nil {

@@ -201,6 +201,7 @@ func sendTo(writer io.Writer, msg encoding.BinaryMarshaler) error {
 		header.msgType = msgServerMetadata
 	case ServerPayload:
 		header.msgType = msgServerPayload
+		header.ackNum = v.ackNumber
 	case CloseConnection:
 		header.msgType = msgClose
 	default:

@@ -140,8 +140,9 @@ func (c *Client) waitForFirstResponse(try int) error {
 }
 
 func (c *Client) sendAcks(conn connection) {
-	timeout := time.NewTimer(500 * time.Millisecond)
-	ackSendMap := map[uint8]time.Time{}
+	timeout := time.NewTimer(1 * time.Millisecond)
+	ackNumWaitingMap := map[uint8]bool{}
+	ackSendTimeMap := map[uint8]time.Time{}
 	nextAckNum := uint8(1)
 	lastPing := time.Now()
 
@@ -151,6 +152,7 @@ func (c *Client) sendAcks(conn connection) {
 			if time.Since(lastPing) > 1*time.Second+10000*c.rtt {
 				log.Println("connection timed out")
 				c.err <- struct{}{}
+				continue
 			}
 			maxFile := uint16(0)
 			maxOff := uint64(0)
@@ -187,8 +189,9 @@ func (c *Client) sendAcks(conn connection) {
 				resendEntries:       res,
 				metaDataMissing:     metaDataMissing,
 			}
-			ackSendMap[nextAckNum] = time.Now()
-			log.Printf("sending ack: %v\n", &ack)
+			ackSendTimeMap[nextAckNum] = time.Now()
+			ackNumWaitingMap[nextAckNum] = true
+			log.Printf("sending ack at timeout: %v: %v\n", c.rtt, &ack)
 			c.Conn.send(ack)
 
 			nextAckNum++
@@ -196,11 +199,16 @@ func (c *Client) sendAcks(conn connection) {
 			if nextAckNum == 0 {
 				nextAckNum++
 			}
-			timeout = time.NewTimer(500 * time.Millisecond)
+			//timeout = time.NewTimer(500 * time.Millisecond)
+			timeout = time.NewTimer(c.rtt)
 
 		case ackNum := <-c.ack:
-			if send, ok := ackSendMap[ackNum]; ok {
-				c.rtt = time.Since(send)
+			if waiting, ok := ackNumWaitingMap[ackNum]; ok && waiting {
+				if sent, ok := ackSendTimeMap[ackNum]; ok {
+					c.rtt = time.Since(sent)
+					ackNumWaitingMap[ackNum] = false
+					log.Printf("got new rtt: %v\n", c.rtt)
+				}
 			}
 			lastPing = time.Now()
 

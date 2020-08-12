@@ -62,7 +62,7 @@ func (c *clientConnection) writeResponse() {
 		if rateControl.isAvailable() {
 			select {
 			case pl := <-c.resend:
-				log.Printf("resending payload for file %v at offset %v\n", pl.fileIndex, pl.offset)
+				log.Printf("resending payload for file %v at offset %v with acknum: %v\n", pl.fileIndex, pl.offset, lastAck)
 				pl.ackNumber = lastAck
 				err = sendTo(c.socket, *pl)
 				rateControl.onSend()
@@ -88,7 +88,7 @@ func (c *clientConnection) writeResponse() {
 				rateControl.onSend()
 
 			case pl := <-c.payload:
-				log.Printf("sending payload for file %v at offset %v\n", pl.fileIndex, pl.offset)
+				log.Printf("sending payload for file %v at offset %v with acknum: %v\n", pl.fileIndex, pl.offset, lastAck)
 				pl.ackNumber = lastAck
 				c.saveToCache(pl)
 				err = sendTo(c.socket, *pl)

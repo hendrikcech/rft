@@ -12,10 +12,11 @@ import (
 	"time"
 )
 
-type FileHandler func(name string, offset uint64) *io.SectionReader
+type FileHandler func(name string) (*io.SectionReader, error)
 
 type fileReader struct {
 	index  uint16
+	offset uint64
 	sr     *io.SectionReader
 	hasher hash.Hash
 }
@@ -163,7 +164,7 @@ func (c *clientConnection) rescheduler() {
 			}
 
 			sort.Sort(&ack.resendEntries)
-			log.Printf("rescheduling sorted ack: %v\n", ack)
+			//log.Printf("rescheduling sorted ack: %v\n", ack)
 
 			if len(ack.resendEntries) <= 0 {
 				if p, ok := c.getFromCache(ack.fileIndex, ack.offset); ok {
@@ -233,11 +234,24 @@ func (c *clientConnection) getResponse(fh FileHandler) {
 
 	srs := []fileReader{}
 	for i, fr := range c.req.files {
-		srs = append(srs, fileReader{
+		r, err := fh(fr.fileName)
+		if err != nil {
+			// TODO
+			// send err metadata
+		}
+		sr := fileReader{
 			index:  uint16(i),
-			sr:     fh(fr.fileName, fr.offset),
+			sr:     r,
 			hasher: md5.New(),
-		})
+		}
+		srs = append(srs, sr)
+
+		// Copy pre offset bytes to hasher
+		n, err := io.CopyN(sr.hasher, sr.sr, int64(fr.offset*1024))
+		if err != nil || n != int64(fr.offset) {
+			// TODO
+			// report read error
+		}
 	}
 
 	closeChan := c.cleaner.subscribe()

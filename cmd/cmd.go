@@ -2,6 +2,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -150,19 +151,18 @@ func directoryHandler(dirname string) (rftp.FileHandler, error) {
 		return nil, err
 	}
 
-	return func(name string, offset uint64) *io.SectionReader {
+	return func(name string) (*io.SectionReader, error) {
 		for _, f := range files {
 			if f.path == name {
 				file, err := os.Open(filepath.Join(dirname, f.path))
 				if err != nil {
-					log.Printf("%s", err)
-					return nil
+					return nil, err
 				}
-				log.Printf("handling file: %v, offset: %v, size: %v\n", file, int64(offset), f.info.Size())
-				return io.NewSectionReader(file, int64(offset), f.info.Size())
+				log.Printf("handling file: %v, size: %v\n", file, f.info.Size())
+				return io.NewSectionReader(file, 0, f.info.Size()), nil
 			}
 		}
-		return nil
+		return nil, errors.New("file not found")
 	}, nil
 }
 

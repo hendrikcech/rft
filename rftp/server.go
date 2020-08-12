@@ -28,6 +28,7 @@ type clientConnection struct {
 	metadata      chan *ServerMetaData
 	ack           chan *ClientAck
 	reschedule    chan *ClientAck
+	resendDone    chan *ServerPayload
 	rescheduledAt map[uint64]time.Time
 	cclose        chan *CloseConnection
 	socket        io.Writer
@@ -66,6 +67,7 @@ func (c *clientConnection) writeResponse() {
 				pl.ackNumber = lastAck
 				err = sendTo(c.socket, *pl)
 				rateControl.onSend()
+				c.resendDone <- pl
 				continue
 
 			case ack := <-c.ack:
@@ -145,10 +147,14 @@ func (c *clientConnection) getFromCache(file uint16, offset uint64) (*ServerPayl
 
 func (c *clientConnection) rescheduler() {
 	closeChan := c.cleaner.subscribe()
+	resendScheduled := map[uint16]map[uint64]struct{}{}
+
 	for {
 		select {
 		case <-closeChan:
 			return
+		case p := <-c.resendDone:
+			delete(resendScheduled[p.fileIndex], p.offset)
 		case ack := <-c.reschedule:
 			// use a map to avoid duplicates in metadata resend entries
 			metadata := map[uint16]struct{}{}
@@ -172,22 +178,29 @@ func (c *clientConnection) rescheduler() {
 				if re.length == 0 {
 					metadata[re.fileIndex] = struct{}{}
 				}
-				if p, ok := c.getFromCache(re.fileIndex, re.offset); ok {
-					if re.length == 0 {
-						c.resend <- p
-						log.Printf("rescheduled payload for file: %v at offset: %v\n", p.fileIndex, p.offset)
-					}
+				if _, exists := resendScheduled[re.fileIndex]; !exists {
+					resendScheduled[re.fileIndex] = make(map[uint64]struct{})
+				}
+				if _, ok := resendScheduled[re.fileIndex][re.offset]; !ok {
+					resendScheduled[re.fileIndex][re.offset] = struct{}{}
 
-					for i := uint64(0); i < uint64(re.length); i++ {
-						if p, ok := c.getFromCache(re.fileIndex, re.offset+i); ok {
+					if p, ok := c.getFromCache(re.fileIndex, re.offset); ok {
+						if re.length == 0 {
 							c.resend <- p
 							log.Printf("rescheduled payload for file: %v at offset: %v\n", p.fileIndex, p.offset)
-						} else {
-							log.Printf("didn't find resend entry in cache: %v\n", re.offset+i)
-							break
-							// TODO:
-							// re-read from sectionReader, this isn't trivial either
-							// because we may have to avoid concurrent reads on the files
+						}
+
+						for i := uint64(0); i < uint64(re.length); i++ {
+							if p, ok := c.getFromCache(re.fileIndex, re.offset+i); ok {
+								c.resend <- p
+								log.Printf("rescheduled payload for file: %v at offset: %v\n", p.fileIndex, p.offset)
+							} else {
+								log.Printf("didn't find resend entry in cache: %v\n", re.offset+i)
+								break
+								// TODO:
+								// re-read from sectionReader, this isn't trivial either
+								// because we may have to avoid concurrent reads on the files
+							}
 						}
 					}
 				}
@@ -213,6 +226,7 @@ func (c *clientConnection) getResponse(fh FileHandler) {
 	c.resend = make(chan *ServerPayload, 1024*1024)
 	c.metadata = make(chan *ServerMetaData, len(c.req.files))
 	c.reschedule = make(chan *ClientAck, 1024)
+	c.resendDone = make(chan *ServerPayload, 1024*1024)
 
 	go c.writeResponse()
 	go c.rescheduler()

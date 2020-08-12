@@ -212,10 +212,12 @@ func (f *FileResponse) write(done chan<- uint16) {
 			} else if payload.offset > f.head {
 				if payload.offset > f.head {
 					f.lock.Lock()
-					heap.Push(f.buffer, payload)
-					f.outOfOrder[payload.offset] = struct{}{}
-					for i := f.head; i < payload.offset; i++ {
-						f.resendEntries[i] = struct{}{}
+					if _, ok := f.outOfOrder[payload.offset]; !ok {
+						heap.Push(f.buffer, payload)
+						f.outOfOrder[payload.offset] = struct{}{}
+						for i := f.head; i < payload.offset; i++ {
+							f.resendEntries[i] = struct{}{}
+						}
 					}
 					f.lock.Unlock()
 				}

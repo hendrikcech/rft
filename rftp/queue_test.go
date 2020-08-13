@@ -6,7 +6,7 @@ import (
 )
 
 func TestChunkQueue(t *testing.T) {
-	items := []*ServerPayload{
+	items := []*serverPayload{
 		{
 			offset: 400,
 		},
@@ -21,7 +21,7 @@ func TestChunkQueue(t *testing.T) {
 		},
 	}
 	q := chunkQueue{
-		items: make([]*ServerPayload, len(items)),
+		items: make([]*serverPayload, len(items)),
 	}
 
 	for i, v := range items {
@@ -32,17 +32,17 @@ func TestChunkQueue(t *testing.T) {
 	heap.Init(&q)
 	//	fmt.Printf("%v\n", q)
 
-	next := &ServerPayload{
+	next := &serverPayload{
 		offset: 500,
 	}
-	items = append([]*ServerPayload{next}, items...)
+	items = append([]*serverPayload{next}, items...)
 	heap.Push(&q, next)
 
 	//gaps := q.Gaps(0)
 	//fmt.Printf("gaps: %v\n", gaps)
 
 	for q.Len() > 0 {
-		item := heap.Pop(&q).(*ServerPayload)
+		item := heap.Pop(&q).(*serverPayload)
 		if items[q.Len()] != item {
 			t.Errorf("heap.Pop() = %v, want %v", item, items[q.Len()])
 		}

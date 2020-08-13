@@ -18,7 +18,7 @@ type UnMarshalBinary interface {
 }
 
 func TestMsgHeaderMarshalling(t *testing.T) {
-	tests := map[string]MsgHeader{
+	tests := map[string]msgHeader{
 		"zero": {
 			version:   0,
 			msgType:   0,
@@ -48,35 +48,35 @@ func TestMsgHeaderMarshalling(t *testing.T) {
 
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			testConversion(t, &tc, &MsgHeader{})
+			testConversion(t, &tc, &msgHeader{})
 		})
 	}
 }
 
 func TestClientRequestMarshalling(t *testing.T) {
-	tests := map[string]ClientRequest{
+	tests := map[string]clientRequest{
 		"empty": {},
 		"one file": {
 			maxTransmissionRate: 0,
-			files:               []FileDescriptor{{5, "path1"}},
+			files:               []fileDescriptor{{5, "path1"}},
 		},
 		"two files": {
 			maxTransmissionRate: 0,
-			files:               []FileDescriptor{{5, "path1"}, {10, "path2"}},
+			files:               []fileDescriptor{{5, "path1"}, {10, "path2"}},
 		},
 		"whitespace": {
 			maxTransmissionRate: 0,
-			files:               []FileDescriptor{{5, "path 1"}, {10, "path2"}},
+			files:               []fileDescriptor{{5, "path 1"}, {10, "path2"}},
 		},
 		"new line": {
 			maxTransmissionRate: 0,
-			files:               []FileDescriptor{{5, "path\n1"}, {10, "path \n2"}},
+			files:               []fileDescriptor{{5, "path\n1"}, {10, "path \n2"}},
 		},
 	}
 
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			testConversion(t, &tc, &ClientRequest{})
+			testConversion(t, &tc, &clientRequest{})
 		})
 	}
 }
@@ -85,7 +85,7 @@ func TestFileRequestMarshalling(t *testing.T) {
 	cs := []byte("846e302501dfdab67f93c10f831d7eee")
 	var csa [16]byte
 	copy(csa[:], cs[:16])
-	tests := map[string]ServerMetaData{
+	tests := map[string]serverMetaData{
 		"empty":             {},
 		"zero":              {0, 0, 0, 0, [16]byte{}},
 		"non-zero-uints":    {0, 1, 2, 3, [16]byte{}},
@@ -93,13 +93,13 @@ func TestFileRequestMarshalling(t *testing.T) {
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			testConversion(t, &tc, &ServerMetaData{})
+			testConversion(t, &tc, &serverMetaData{})
 		})
 	}
 }
 
 func TestDataMarshalling(t *testing.T) {
-	tests := map[string]ServerPayload{
+	tests := map[string]serverPayload{
 		"empty": {},
 		"zero": {
 			fileIndex: 0,
@@ -109,21 +109,21 @@ func TestDataMarshalling(t *testing.T) {
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			r := &ServerPayload{}
+			r := &serverPayload{}
 			testConversion(t, &tc, r)
 		})
 	}
 }
 
 func TestAcknowledgementMarshalling(t *testing.T) {
-	tests := map[string]ClientAck{
+	tests := map[string]clientAck{
 		"no-missing":   {0, 0, 0, false, 0, 0, nil},
-		"resend-entry": {0, 0, 0, false, 0, 0, []*ResendEntry{{0, 1, 2}}},
-		"offset-2":     {0, 0, 0, false, 0, 2, []*ResendEntry{{0, 1, 2}}},
+		"resend-entry": {0, 0, 0, false, 0, 0, []*resendEntry{{0, 1, 2}}},
+		"offset-2":     {0, 0, 0, false, 0, 2, []*resendEntry{{0, 1, 2}}},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			r := &ClientAck{}
+			r := &clientAck{}
 			testConversion(t, &tc, r)
 		})
 	}

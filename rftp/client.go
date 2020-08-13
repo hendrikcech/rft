@@ -36,7 +36,7 @@ func (c *Client) Request(host string, files []string) ([]*FileResponse, error) {
 		return nil, errors.New("too many files in request, use max. 65536 files per request")
 	}
 
-	fs := make([]FileDescriptor, len(files))
+	fs := make([]fileDescriptor, len(files))
 	c.responses = make([]*FileResponse, len(files))
 	c.ack = make(chan uint8, 1024)
 	c.err = make(chan struct{})
@@ -45,7 +45,7 @@ func (c *Client) Request(host string, files []string) ([]*FileResponse, error) {
 	c.stopAck = make(chan struct{})
 
 	for i, f := range files {
-		fs[i] = FileDescriptor{0, f}
+		fs[i] = fileDescriptor{0, f}
 		c.responses[i] = newFileResponse(f, uint16(i))
 		go c.responses[i].write(c.done)
 	}
@@ -61,13 +61,13 @@ func (c *Client) Request(host string, files []string) ([]*FileResponse, error) {
 	return c.responses, nil
 }
 
-func (c *Client) sendRequest(host string, fs []FileDescriptor) error {
+func (c *Client) sendRequest(host string, fs []fileDescriptor) error {
 	for i := 1; i <= 10; i++ {
 		if err := c.Conn.connectTo(host); err != nil {
 			return err
 		}
 		c.start = time.Now()
-		if err := c.Conn.send(ClientRequest{
+		if err := c.Conn.send(clientRequest{
 			maxTransmissionRate: 0,
 			files:               fs,
 		}); err != nil {
@@ -158,7 +158,7 @@ func (c *Client) sendAcks(conn connection) {
 			maxOff := uint64(0)
 			metaDataMissing := false
 			maxTransmission := 1
-			res := []*ResendEntry{}
+			res := []*resendEntry{}
 			for i, r := range c.responses {
 				if len(res) > 3 {
 					break
@@ -180,7 +180,7 @@ func (c *Client) sendAcks(conn connection) {
 					}
 				}
 			}
-			ack := ClientAck{
+			ack := clientAck{
 				ackNumber:           nextAckNum,
 				maxTransmissionRate: uint32(maxTransmission),
 				fileIndex:           maxFile,
@@ -220,7 +220,7 @@ func (c *Client) sendAcks(conn connection) {
 }
 
 func (c *Client) handleMetadata(_ io.Writer, p *packet) {
-	smd := ServerMetaData{}
+	smd := serverMetaData{}
 	err := smd.UnmarshalBinary(p.data)
 	if err != nil {
 		// TODO: what now? Rerequest metadata.
@@ -232,7 +232,7 @@ func (c *Client) handleMetadata(_ io.Writer, p *packet) {
 }
 
 func (c *Client) handleServerPayload(_ io.Writer, p *packet) {
-	pl := ServerPayload{}
+	pl := serverPayload{}
 	err := pl.UnmarshalBinary(p.data)
 	if err != nil {
 		// TODO: what now? Rerequest payload
@@ -244,7 +244,7 @@ func (c *Client) handleServerPayload(_ io.Writer, p *packet) {
 }
 
 func (c *Client) handleClose(_ io.Writer, p *packet) {
-	cl := CloseConnection{}
+	cl := closeConnection{}
 	err := cl.UnmarshalBinary(p.data)
 	if err != nil {
 		// TODO: what now? Just drop everything?

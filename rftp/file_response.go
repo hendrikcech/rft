@@ -16,8 +16,8 @@ type FileResponse struct {
 	index uint16
 	Name  string
 
-	mc chan *ServerMetaData
-	pc chan *ServerPayload
+	mc chan *serverMetaData
+	pc chan *serverPayload
 	cc chan struct{}
 
 	preader       *io.PipeReader
@@ -48,8 +48,8 @@ func newFileResponse(name string, index uint16) *FileResponse {
 		index: index,
 		Name:  name,
 
-		mc: make(chan *ServerMetaData),
-		pc: make(chan *ServerPayload, 1024*1024),
+		mc: make(chan *serverMetaData),
+		pc: make(chan *serverPayload, 1024*1024),
 		cc: make(chan struct{}),
 
 		preader:       r,
@@ -87,14 +87,14 @@ type resendData struct {
 	started    bool
 	metadata   bool
 	head       uint64
-	res        []*ResendEntry
+	res        []*resendEntry
 	bufferSize int
 }
 
 func (f *FileResponse) getResendEntries(max int) *resendData {
 	f.lock.Lock()
 	defer f.lock.Unlock()
-	res := []*ResendEntry{}
+	res := []*resendEntry{}
 	// TODO: make sort faster? keep it sorted? Check loss of precision when
 	// converting uint64 to int?
 	entries := make([]int, len(f.resendEntries))
@@ -109,7 +109,7 @@ func (f *FileResponse) getResendEntries(max int) *resendData {
 			break
 		}
 		if _, ok := f.outOfOrder[uint64(offset)]; !ok {
-			res = append(res, &ResendEntry{
+			res = append(res, &resendEntry{
 				fileIndex: f.index,
 				offset:    uint64(offset),
 				length:    1,
@@ -118,7 +118,7 @@ func (f *FileResponse) getResendEntries(max int) *resendData {
 	}
 
 	if !f.metadata {
-		res = append(res, &ResendEntry{
+		res = append(res, &resendEntry{
 			fileIndex: f.index,
 			offset:    f.head,
 			length:    0,
@@ -243,7 +243,7 @@ func (f *FileResponse) drainBuffer() {
 	top := f.buffer.Top()
 	log.Printf("buffer top: %v, head: %v\n", top, f.head)
 	for top <= f.head && f.buffer.Len() > 0 {
-		payload := heap.Pop(f.buffer).(*ServerPayload)
+		payload := heap.Pop(f.buffer).(*serverPayload)
 		if top == f.head {
 			if f.metadata && payload.offset == f.chunks-1 {
 				log.Printf("writing last chunk")

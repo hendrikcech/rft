@@ -19,7 +19,7 @@ type RateControl interface {
 	awaitAvailable() <-chan struct{}
 
 	// Must be called with a newly received client acknowledgment.
-	onAck(*ClientAck)
+	onAck(*clientAck)
 
 	// Must be called once for each packet that is sent on a connection.
 	onSend()
@@ -97,7 +97,7 @@ func (c *aimd) isAvailable() bool {
 	return sent < c.congRate
 }
 
-func (c *aimd) onAck(ack *ClientAck) {
+func (c *aimd) onAck(ack *clientAck) {
 	if ack.ackNumber < c.lastAck {
 		// Should we make sure that out-of-order ACKs are handled earlier?
 		c.lastAck = ack.ackNumber

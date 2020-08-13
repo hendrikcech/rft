@@ -23,21 +23,21 @@ type fileReader struct {
 
 type clientConnection struct {
 	rtt           time.Duration
-	req           *ClientRequest
-	payload       chan *ServerPayload
-	resend        chan *ServerPayload
-	metadata      chan *ServerMetaData
-	ack           chan *ClientAck
-	reschedule    chan *ClientAck
-	resendDone    chan *ServerPayload
+	req           *clientRequest
+	payload       chan *serverPayload
+	resend        chan *serverPayload
+	metadata      chan *serverMetaData
+	ack           chan *clientAck
+	reschedule    chan *clientAck
+	resendDone    chan *serverPayload
 	rescheduledAt map[uint64]time.Time
-	cclose        chan *CloseConnection
+	cclose        chan *closeConnection
 	socket        io.Writer
 
-	cleaner Cleaner
+	cleaner cleaner
 
-	metadataCache    map[uint16]*ServerMetaData
-	payloadCache     map[uint16]map[uint64]*ServerPayload
+	metadataCache    map[uint16]*serverMetaData
+	payloadCache     map[uint16]map[uint64]*serverPayload
 	payloadCacheLock sync.Mutex
 }
 
@@ -48,7 +48,7 @@ func (c *clientConnection) writeResponse() {
 	rateControl.start()
 	defer rateControl.stop()
 
-	handleAck := func(ack *ClientAck) {
+	handleAck := func(ack *clientAck) {
 		lastAck = ack.ackNumber
 		rateControl.onAck(ack)
 		c.reschedule <- ack
@@ -122,18 +122,18 @@ func (c *clientConnection) writeResponse() {
 // TODO: Drop cached payloads. That's not trivial, because we don't have
 // explicit acks per file, so we have to calculate it, to avoid keeping all
 // files in the cache.
-func (c *clientConnection) saveToCache(p *ServerPayload) {
+func (c *clientConnection) saveToCache(p *serverPayload) {
 	c.payloadCacheLock.Lock()
 	defer c.payloadCacheLock.Unlock()
 	_, ok := c.payloadCache[p.fileIndex]
 	if !ok {
-		c.payloadCache[p.fileIndex] = make(map[uint64]*ServerPayload)
+		c.payloadCache[p.fileIndex] = make(map[uint64]*serverPayload)
 	}
 
 	c.payloadCache[p.fileIndex][p.offset] = p
 }
 
-func (c *clientConnection) getFromCache(file uint16, offset uint64) (*ServerPayload, bool) {
+func (c *clientConnection) getFromCache(file uint16, offset uint64) (*serverPayload, bool) {
 	c.payloadCacheLock.Lock()
 	defer c.payloadCacheLock.Unlock()
 
@@ -222,11 +222,11 @@ func (c *clientConnection) getResponse(fh FileHandler) {
 		// TODO Send error file not available
 	}
 
-	c.payload = make(chan *ServerPayload, 1024*1024)
-	c.resend = make(chan *ServerPayload, 1024*1024)
-	c.metadata = make(chan *ServerMetaData, len(c.req.files))
-	c.reschedule = make(chan *ClientAck, 1024)
-	c.resendDone = make(chan *ServerPayload, 1024*1024)
+	c.payload = make(chan *serverPayload, 1024*1024)
+	c.resend = make(chan *serverPayload, 1024*1024)
+	c.metadata = make(chan *serverMetaData, len(c.req.files))
+	c.reschedule = make(chan *clientAck, 1024)
+	c.resendDone = make(chan *serverPayload, 1024*1024)
 
 	go c.writeResponse()
 	go c.rescheduler()
@@ -261,11 +261,11 @@ func (c *clientConnection) getResponse(fh FileHandler) {
 		}
 
 		if fr.sr == nil {
-			c.metadata <- &ServerMetaData{fileIndex: fr.index, status: fileNotExistent}
+			c.metadata <- &serverMetaData{fileIndex: fr.index, status: fileNotExistent}
 			continue
 		}
 		if fr.sr.Size() == 0 {
-			c.metadata <- &ServerMetaData{fileIndex: fr.index, status: fileEmpty}
+			c.metadata <- &serverMetaData{fileIndex: fr.index, status: fileEmpty}
 			continue
 		}
 
@@ -284,7 +284,7 @@ func (c *clientConnection) getResponse(fh FileHandler) {
 			if err != nil {
 				log.Printf("failed to write to hash: %v\n", err)
 			}
-			p := &ServerPayload{
+			p := &serverPayload{
 				fileIndex: fr.index,
 				data:      buf[:n],
 				offset:    uint64(off),
@@ -297,7 +297,7 @@ func (c *clientConnection) getResponse(fh FileHandler) {
 			}
 		}
 
-		m := &ServerMetaData{fileIndex: fr.index, size: uint64(fr.sr.Size())}
+		m := &serverMetaData{fileIndex: fr.index, size: uint64(fr.sr.Size())}
 		copy(m.checkSum[:], fr.hasher.Sum(nil)[:16])
 		c.metadata <- m
 	}
@@ -307,7 +307,7 @@ func key(ip *net.UDPAddr) string {
 	return fmt.Sprintf("%v:%v", ip.IP, ip.Port)
 }
 
-type Cleaner struct {
+type cleaner struct {
 	closeLock   sync.RWMutex
 	subs        []chan struct{}
 	closedState bool
@@ -318,7 +318,7 @@ type Cleaner struct {
 	cb func()
 }
 
-func (c *Cleaner) close() {
+func (c *cleaner) close() {
 	c.closeLock.Lock()
 	defer c.closeLock.Unlock()
 	if c.closedState {
@@ -332,19 +332,19 @@ func (c *Cleaner) close() {
 	c.cb()
 }
 
-func (c *Cleaner) closed() bool {
+func (c *cleaner) closed() bool {
 	c.closeLock.RLock()
 	defer c.closeLock.RUnlock()
 	return c.closedState
 }
 
-func (c *Cleaner) refresh(d time.Duration) {
+func (c *cleaner) refresh(d time.Duration) {
 	c.timeoutLock.Lock()
 	defer c.timeoutLock.Unlock()
 	c.deadline = time.Now().Add(d)
 }
 
-func (c *Cleaner) checkTimeout() {
+func (c *cleaner) checkTimeout() {
 	c.timeoutLock.Lock()
 	defer c.timeoutLock.Unlock()
 	if time.Now().After(c.deadline) {
@@ -354,7 +354,7 @@ func (c *Cleaner) checkTimeout() {
 	}
 }
 
-func (c *Cleaner) subscribe() <-chan struct{} {
+func (c *cleaner) subscribe() <-chan struct{} {
 	c.closeLock.Lock()
 	defer c.closeLock.Unlock()
 	new := make(chan struct{}, 1)
@@ -438,7 +438,7 @@ func (s *Server) handleRequest(w io.Writer, p *packet) {
 	//y := 20 * time.Second
 	//w = getUnreliableWriter(w, x, y)
 
-	cr := &ClientRequest{}
+	cr := &clientRequest{}
 	err := cr.UnmarshalBinary(p.data)
 	if err != nil {
 		// TODO: Close connection?
@@ -450,20 +450,20 @@ func (s *Server) handleRequest(w io.Writer, p *packet) {
 	defer s.clientMux.Unlock()
 	if _, ok := s.clients[key]; !ok {
 		c := &clientConnection{
-			ack:    make(chan *ClientAck, 1024),
-			cclose: make(chan *CloseConnection),
+			ack:    make(chan *clientAck, 1024),
+			cclose: make(chan *closeConnection),
 			socket: w,
 			req:    cr,
 
-			cleaner: Cleaner{cb: func() {
+			cleaner: cleaner{cb: func() {
 				s.clientMux.Lock()
 				defer s.clientMux.Unlock()
 				delete(s.clients, key)
 				log.Printf("Conn %v closed. Current number of connections: %v\n", key, len(s.clients))
 			}},
 
-			payloadCache:  make(map[uint16]map[uint64]*ServerPayload),
-			metadataCache: make(map[uint16]*ServerMetaData),
+			payloadCache:  make(map[uint16]map[uint64]*serverPayload),
+			metadataCache: make(map[uint16]*serverMetaData),
 		}
 		s.clients[key] = c
 		go c.getResponse(s.fh)
@@ -475,7 +475,7 @@ func (s *Server) handleRequest(w io.Writer, p *packet) {
 }
 
 func (s *Server) handleACK(_ io.Writer, p *packet) {
-	ack := &ClientAck{}
+	ack := &clientAck{}
 	err := ack.UnmarshalBinary(p.data)
 	if err != nil {
 		// TODO: Close connection?
@@ -491,7 +491,7 @@ func (s *Server) handleACK(_ io.Writer, p *packet) {
 }
 
 func (s *Server) handleClose(_ io.Writer, p *packet) {
-	cl := CloseConnection{}
+	cl := closeConnection{}
 	err := cl.UnmarshalBinary(p.data)
 	if err != nil {
 		// TODO What now?

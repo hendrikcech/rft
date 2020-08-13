@@ -114,7 +114,7 @@ func (c *udpConnection) receive() error {
 			continue
 		}
 
-		header := &MsgHeader{}
+		header := &msgHeader{}
 		if err := header.UnmarshalBinary(msg); err != nil {
 			// Some wisdom: "Be conservative in what you do, be liberal in what you
 			// accept from others."
@@ -186,23 +186,23 @@ func (c *udpConnection) LossSim(lossSim LossSimulator) {
 }
 
 func sendTo(writer io.Writer, msg encoding.BinaryMarshaler) error {
-	header := MsgHeader{
+	header := msgHeader{
 		version:   1,
 		optionLen: 0,
 	}
 
 	switch v := msg.(type) {
-	case ClientRequest:
+	case clientRequest:
 		header.msgType = msgClientRequest
-	case ClientAck:
+	case clientAck:
 		header.msgType = msgClientAck
 		header.ackNum = v.ackNumber
-	case ServerMetaData:
+	case serverMetaData:
 		header.msgType = msgServerMetadata
-	case ServerPayload:
+	case serverPayload:
 		header.msgType = msgServerPayload
 		header.ackNum = v.ackNumber
-	case CloseConnection:
+	case closeConnection:
 		header.msgType = msgClose
 	default:
 		return fmt.Errorf("unknown msg type %T", v)
@@ -253,7 +253,7 @@ func (c *testConnection) handle(msgType uint8, h packetHandler) {
 func (c *testConnection) receive() error {
 	rw := responseWriter(func(bs []byte) (n int, err error) {
 		n = len(bs)
-		header := &MsgHeader{}
+		header := &msgHeader{}
 		if err = header.UnmarshalBinary(bs); err != nil {
 			// signal tests that this error occured?
 			return n, nil
@@ -262,15 +262,15 @@ func (c *testConnection) receive() error {
 		var msg encoding.BinaryUnmarshaler
 		switch header.msgType {
 		case msgClientRequest:
-			msg = &ClientRequest{}
+			msg = &clientRequest{}
 		case msgServerMetadata:
-			msg = &ServerMetaData{}
+			msg = &serverMetaData{}
 		case msgServerPayload:
-			msg = &ServerPayload{}
+			msg = &serverPayload{}
 		case msgClientAck:
-			msg = &ClientAck{}
+			msg = &clientAck{}
 		case msgClose:
-			msg = &CloseConnection{}
+			msg = &closeConnection{}
 		default:
 			return n, nil
 		}
@@ -288,7 +288,7 @@ func (c *testConnection) receive() error {
 		case <-c.cancel:
 			return nil
 		case msg := <-c.recvChan:
-			header := &MsgHeader{}
+			header := &msgHeader{}
 			if err := header.UnmarshalBinary(msg); err != nil {
 				return fmt.Errorf("error while unmarshalling packet header: %v", err)
 			}

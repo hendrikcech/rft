@@ -7,14 +7,14 @@ import (
 )
 
 type chunkQueue struct {
-	items     []*ServerPayload
+	items     []*serverPayload
 	max       uint64 // filesize
 	fileIndex uint16
 }
 
 func newChunkQueue(fi uint16) *chunkQueue {
 	return &chunkQueue{
-		items:     make([]*ServerPayload, 0),
+		items:     make([]*serverPayload, 0),
 		max:       0,
 		fileIndex: fi,
 	}
@@ -45,7 +45,7 @@ func (c chunkQueue) Swap(i int, j int) {
 }
 
 func (c *chunkQueue) Push(x interface{}) {
-	payload := x.(*ServerPayload)
+	payload := x.(*serverPayload)
 	c.items = append(c.items, payload)
 }
 
@@ -65,7 +65,7 @@ func (c *chunkQueue) Top() uint64 {
 	item := heap.Pop(c)
 	defer heap.Push(c, item)
 	if item != nil {
-		return item.(*ServerPayload).offset
+		return item.(*serverPayload).offset
 	}
 	return 0
 }

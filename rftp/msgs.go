@@ -79,7 +79,7 @@ func (o *option) MarshalBinary() (data []byte, err error) {
 	return buf, nil
 }
 
-type MsgHeader struct {
+type msgHeader struct {
 	version   uint8
 	msgType   uint8
 	ackNum    uint8
@@ -89,7 +89,7 @@ type MsgHeader struct {
 	hdrLen int
 }
 
-func (s MsgHeader) MarshalBinary() ([]byte, error) {
+func (s msgHeader) MarshalBinary() ([]byte, error) {
 	buf := new(bytes.Buffer)
 	vt := s.version<<4 ^ s.msgType
 	err := binary.Write(buf, binary.BigEndian, vt)
@@ -115,7 +115,7 @@ func (s MsgHeader) MarshalBinary() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func (s *MsgHeader) UnmarshalBinary(data []byte) error {
+func (s *msgHeader) UnmarshalBinary(data []byte) error {
 	if len(data) < 2 {
 		return fmt.Errorf("MsgHeader too short")
 	}
@@ -144,19 +144,19 @@ func (s *MsgHeader) UnmarshalBinary(data []byte) error {
 	return nil
 }
 
-type ClientRequest struct {
+type clientRequest struct {
 	maxTransmissionRate uint32
-	files               []FileDescriptor
+	files               []fileDescriptor
 }
 
-type FileDescriptor struct {
+type fileDescriptor struct {
 	offset   uint64
 	fileName string
 }
 
 var maxFileOffset = uint64(math.Pow(2, 56)) - 1
 
-func (s ClientRequest) MarshalBinary() ([]byte, error) {
+func (s clientRequest) MarshalBinary() ([]byte, error) {
 	buf := new(bytes.Buffer)
 
 	err := binary.Write(buf, binary.BigEndian, s.maxTransmissionRate)
@@ -196,7 +196,7 @@ func (s ClientRequest) MarshalBinary() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func (s *ClientRequest) UnmarshalBinary(data []byte) error {
+func (s *clientRequest) UnmarshalBinary(data []byte) error {
 	s.maxTransmissionRate = binary.BigEndian.Uint32(data[:4])
 	numFiles := binary.BigEndian.Uint16(data[4:6])
 
@@ -204,11 +204,11 @@ func (s *ClientRequest) UnmarshalBinary(data []byte) error {
 		return nil
 	}
 
-	s.files = make([]FileDescriptor, numFiles)
+	s.files = make([]fileDescriptor, numFiles)
 
 	dataLens := data[6:]
 	for i := uint16(0); i < numFiles; i++ {
-		f := FileDescriptor{}
+		f := fileDescriptor{}
 		f.offset = uintOffset(dataLens[:7])
 		pathLen := binary.BigEndian.Uint16(dataLens[7:9])
 		f.fileName = string(dataLens[9 : 9+pathLen])
@@ -220,7 +220,7 @@ func (s *ClientRequest) UnmarshalBinary(data []byte) error {
 	return nil
 }
 
-type ServerMetaData struct {
+type serverMetaData struct {
 	ackNum    uint8
 	status    MetaDataStatus
 	fileIndex uint16
@@ -228,7 +228,7 @@ type ServerMetaData struct {
 	checkSum  [16]byte
 }
 
-func (s ServerMetaData) MarshalBinary() ([]byte, error) {
+func (s serverMetaData) MarshalBinary() ([]byte, error) {
 	buf := new(bytes.Buffer)
 	err := binary.Write(buf, binary.BigEndian, byte(0))
 	if err != nil {
@@ -253,7 +253,7 @@ func (s ServerMetaData) MarshalBinary() ([]byte, error) {
 	return buf.Bytes(), err
 }
 
-func (s *ServerMetaData) UnmarshalBinary(data []byte) error {
+func (s *serverMetaData) UnmarshalBinary(data []byte) error {
 	s.status = MetaDataStatus(data[1])
 	s.fileIndex = binary.BigEndian.Uint16(data[2:4])
 	s.size = binary.BigEndian.Uint64(data[4:12])
@@ -266,18 +266,18 @@ func (s *ServerMetaData) UnmarshalBinary(data []byte) error {
 	return nil
 }
 
-type ServerPayload struct {
+type serverPayload struct {
 	fileIndex uint16
 	ackNumber uint8
 	offset    uint64
 	data      []byte
 }
 
-func (s *ServerPayload) String() string {
+func (s *serverPayload) String() string {
 	return fmt.Sprintf("%v", *s)
 }
 
-func (s ServerPayload) MarshalBinary() ([]byte, error) {
+func (s serverPayload) MarshalBinary() ([]byte, error) {
 	buf := new(bytes.Buffer)
 	err := binary.Write(buf, binary.BigEndian, s.fileIndex)
 	if err != nil {
@@ -297,7 +297,7 @@ func (s ServerPayload) MarshalBinary() ([]byte, error) {
 	return bs, err
 }
 
-func (s *ServerPayload) UnmarshalBinary(data []byte) error {
+func (s *serverPayload) UnmarshalBinary(data []byte) error {
 	s.fileIndex = binary.BigEndian.Uint16(data[0:2])
 
 	s.offset = uintOffset(data[2:9])
@@ -308,45 +308,45 @@ func (s *ServerPayload) UnmarshalBinary(data []byte) error {
 	return nil
 }
 
-type ResendEntry struct {
+type resendEntry struct {
 	fileIndex uint16
 	offset    uint64
 	length    uint8
 }
 
-func (r *ResendEntry) String() string {
+func (r *resendEntry) String() string {
 	return fmt.Sprintf("%v", *r)
 }
 
-type ResendEntryList []*ResendEntry
+type resendEntryList []*resendEntry
 
 // Len is the number of elements in the collection.
-func (r *ResendEntryList) Len() int {
+func (r *resendEntryList) Len() int {
 	return len(*r)
 }
 
 // Less reports whether the element with
 // index i should sort before the element with index j.
-func (r *ResendEntryList) Less(i int, j int) bool {
+func (r *resendEntryList) Less(i int, j int) bool {
 	return (*r)[i].offset < (*r)[j].offset
 }
 
 // Swap swaps the elements with indexes i and j.
-func (r *ResendEntryList) Swap(i int, j int) {
+func (r *resendEntryList) Swap(i int, j int) {
 	(*r)[i], (*r)[j] = (*r)[j], (*r)[i]
 }
 
-type ClientAck struct {
+type clientAck struct {
 	ackNumber           uint8
 	fileIndex           uint16
 	rtt                 int64
 	metaDataMissing     bool
 	maxTransmissionRate uint32
 	offset              uint64
-	resendEntries       ResendEntryList
+	resendEntries       resendEntryList
 }
 
-func (c *ClientAck) String() string {
+func (c *clientAck) String() string {
 	res := []string{}
 	sort.Sort(&c.resendEntries)
 	for _, re := range c.resendEntries {
@@ -380,7 +380,7 @@ func uintOffset(seven []byte) uint64 {
 	return binary.BigEndian.Uint64(offsetPad)
 }
 
-func (c ClientAck) MarshalBinary() ([]byte, error) {
+func (c clientAck) MarshalBinary() ([]byte, error) {
 	buf := new(bytes.Buffer)
 	err := binary.Write(buf, binary.BigEndian, c.fileIndex)
 	if err != nil {
@@ -436,7 +436,7 @@ func (c ClientAck) MarshalBinary() ([]byte, error) {
 	return bs, nil
 }
 
-func (c *ClientAck) UnmarshalBinary(data []byte) error {
+func (c *clientAck) UnmarshalBinary(data []byte) error {
 	c.fileIndex = binary.BigEndian.Uint16(data[0:2])
 	status := binary.BigEndian.Uint16(data[2:4])
 	c.rtt = int64(0x7FFF & status)
@@ -447,7 +447,7 @@ func (c *ClientAck) UnmarshalBinary(data []byte) error {
 	if len(data) > 15 {
 		reBytes := data[15:]
 		for i := 0; i < len(reBytes)/10; i++ {
-			re := &ResendEntry{}
+			re := &resendEntry{}
 			re.fileIndex = binary.BigEndian.Uint16(reBytes[:2])
 			re.offset = uintOffset(reBytes[2:9])
 			re.length = uint8(reBytes[9])
@@ -491,11 +491,11 @@ func (m CloseConnectionReason) String() string {
 	return fmt.Sprintf("unknown reason: %v", uint8(m))
 }
 
-type CloseConnection struct {
+type closeConnection struct {
 	reason CloseConnectionReason
 }
 
-func (c CloseConnection) MarshalBinary() ([]byte, error) {
+func (c closeConnection) MarshalBinary() ([]byte, error) {
 	buf := new(bytes.Buffer)
 	err := binary.Write(buf, binary.BigEndian, c.reason)
 	if err != nil {
@@ -504,7 +504,7 @@ func (c CloseConnection) MarshalBinary() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func (c *CloseConnection) UnmarshalBinary(data []byte) error {
+func (c *closeConnection) UnmarshalBinary(data []byte) error {
 	c.reason = CloseConnectionReason(binary.BigEndian.Uint16(data[:2]))
 	return nil
 }

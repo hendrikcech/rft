@@ -156,7 +156,7 @@ func (c *Client) sendAcks(conn connection) {
 			}
 			maxFile := uint16(0)
 			maxOff := uint64(0)
-			metaDataMissing := false
+			status := metaDataReceived
 			maxTransmission := 1
 			res := []*resendEntry{}
 			for i, r := range c.responses {
@@ -176,7 +176,7 @@ func (c *Client) sendAcks(conn connection) {
 					maxFile = index
 					maxOff = rd.head
 					if !rd.metadata {
-						metaDataMissing = true
+						status = metaDataMissing
 					}
 				}
 			}
@@ -184,10 +184,9 @@ func (c *Client) sendAcks(conn connection) {
 				ackNumber:           nextAckNum,
 				maxTransmissionRate: uint32(maxTransmission),
 				fileIndex:           maxFile,
-				rtt:                 c.rtt.Milliseconds(),
 				offset:              maxOff,
 				resendEntries:       res,
-				metaDataMissing:     metaDataMissing,
+				status:              status,
 			}
 			ackSendTimeMap[nextAckNum] = time.Now()
 			ackNumWaitingMap[nextAckNum] = true

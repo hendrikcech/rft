@@ -94,10 +94,10 @@ var rootCmd = &cobra.Command{
 
 		for i, req := range reqs {
 			var w io.Writer
+			path := filepath.Join(out, files[i])
 			if out == "-" {
 				w = os.Stdout
 			} else {
-				path := filepath.Join(out, files[i])
 				w, err = os.OpenFile(path, os.O_WRONLY|os.O_CREATE, 0644)
 				if err != nil {
 					log.Printf("Can't write file to %s: %s", path, err)
@@ -108,6 +108,11 @@ var rootCmd = &cobra.Command{
 			if !debug {
 				r := &progressReader{req, 0}
 				io.Copy(w, r)
+				fi, err := os.Stat(path)
+				if err != nil {
+					log.Panic(err)
+				}
+				printProgress(fi.Size(), int64(req.Size()))
 				fmt.Println()
 			} else {
 				io.Copy(w, req)

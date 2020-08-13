@@ -11,6 +11,7 @@ import (
 	"strings"
 )
 
+// msgs types
 const (
 	msgClientRequest uint8 = iota
 	msgServerMetadata
@@ -19,6 +20,7 @@ const (
 	msgClose
 )
 
+// status, the server puts to metadata
 type MetaDataStatus uint8
 
 const (
@@ -336,11 +338,15 @@ func (r *resendEntryList) Swap(i int, j int) {
 	(*r)[i], (*r)[j] = (*r)[j], (*r)[i]
 }
 
+const (
+	metaDataReceived uint8 = iota
+	metaDataMissing
+)
+
 type clientAck struct {
 	ackNumber           uint8
 	fileIndex           uint16
-	rtt                 int64
-	metaDataMissing     bool
+	status              uint8
 	maxTransmissionRate uint32
 	offset              uint64
 	resendEntries       resendEntryList
@@ -353,11 +359,10 @@ func (c *clientAck) String() string {
 		res = append(res, re.String())
 	}
 	return fmt.Sprintf(
-		"{%v %v %v %v %v %v %v}",
+		"{%v %v %v %v %v %v}",
 		c.ackNumber,
 		c.fileIndex,
-		c.rtt,
-		c.metaDataMissing,
+		c.status,
 		c.maxTransmissionRate,
 		c.offset,
 		fmt.Sprintf("[%v]", strings.Join(res, " ")),
@@ -386,16 +391,7 @@ func (c clientAck) MarshalBinary() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	var status uint16
-	if c.rtt > 0x7FFF {
-		status = 0x7FFF
-	} else {
-		status = uint16(c.rtt)
-	}
-	if c.metaDataMissing {
-		status &= 0x8000
-	}
-	err = binary.Write(buf, binary.BigEndian, status)
+	err = binary.Write(buf, binary.BigEndian, c.status)
 	if err != nil {
 		return nil, err
 	}
@@ -438,14 +434,12 @@ func (c clientAck) MarshalBinary() ([]byte, error) {
 
 func (c *clientAck) UnmarshalBinary(data []byte) error {
 	c.fileIndex = binary.BigEndian.Uint16(data[0:2])
-	status := binary.BigEndian.Uint16(data[2:4])
-	c.rtt = int64(0x7FFF & status)
-	c.metaDataMissing = status&0x8000 > 0
-	c.maxTransmissionRate = binary.BigEndian.Uint32(data[4:8])
-	c.offset = uintOffset(data[8:15])
+	c.status = uint8(data[2])
+	c.maxTransmissionRate = binary.BigEndian.Uint32(data[3:7])
+	c.offset = uintOffset(data[7:14])
 
-	if len(data) > 15 {
-		reBytes := data[15:]
+	if len(data) > 14 {
+		reBytes := data[14:]
 		for i := 0; i < len(reBytes)/10; i++ {
 			re := &resendEntry{}
 			re.fileIndex = binary.BigEndian.Uint16(reBytes[:2])

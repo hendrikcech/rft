@@ -189,7 +189,9 @@ func directoryHandler(dirname string) (rftp.FileHandler, error) {
 				if err != nil {
 					return nil, err
 				}
-				fmt.Printf("handling file: %v, size: %v\n", file.Name(), byteCountIEC(f.info.Size()))
+				if !debug {
+					fmt.Printf("handling file: %v, size: %v\n", file.Name(), byteCountIEC(f.info.Size()))
+				}
 				return io.NewSectionReader(file, 0, f.info.Size()), nil
 			}
 		}

@@ -63,7 +63,6 @@ func (c *clientConnection) writeResponse() {
 		if rateControl.isAvailable() {
 			select {
 			case pl := <-c.resend:
-				log.Printf("resending payload for file %v at offset %v with acknum: %v\n", pl.fileIndex, pl.offset, lastAck)
 				pl.ackNumber = lastAck
 				err = sendTo(c.socket, *pl)
 				rateControl.onSend()
@@ -90,7 +89,6 @@ func (c *clientConnection) writeResponse() {
 				rateControl.onSend()
 
 			case pl := <-c.payload:
-				log.Printf("sending payload for file %v at offset %v with acknum: %v\n", pl.fileIndex, pl.offset, lastAck)
 				pl.ackNumber = lastAck
 				c.saveToCache(pl)
 				err = sendTo(c.socket, *pl)
@@ -163,12 +161,10 @@ func (c *clientConnection) rescheduler() {
 			}
 
 			sort.Sort(&ack.resendEntries)
-			//log.Printf("rescheduling sorted ack: %v\n", ack)
 
 			if len(ack.resendEntries) <= 0 {
 				if p, ok := c.getFromCache(ack.fileIndex, ack.offset); ok {
 					c.resend <- p
-					log.Printf("rescheduled payload for file: %v at offset: %v\n", p.fileIndex, p.offset)
 				}
 			}
 			for i, re := range ack.resendEntries {
@@ -187,13 +183,11 @@ func (c *clientConnection) rescheduler() {
 					if p, ok := c.getFromCache(re.fileIndex, re.offset); ok {
 						if re.length == 0 {
 							c.resend <- p
-							log.Printf("rescheduled payload for file: %v at offset: %v\n", p.fileIndex, p.offset)
 						}
 
 						for i := uint64(0); i < uint64(re.length); i++ {
 							if p, ok := c.getFromCache(re.fileIndex, re.offset+i); ok {
 								c.resend <- p
-								log.Printf("rescheduled payload for file: %v at offset: %v\n", p.fileIndex, p.offset)
 							} else {
 								log.Printf("didn't find resend entry in cache: %v\n", re.offset+i)
 								break
@@ -209,7 +203,6 @@ func (c *clientConnection) rescheduler() {
 			// resend metadata
 			for k := range metadata {
 				if m, ok := c.metadataCache[k]; ok {
-					log.Printf("rescheduled metadata for file: %v\n", k)
 					c.metadata <- m
 				}
 			}

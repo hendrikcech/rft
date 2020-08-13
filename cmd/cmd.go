@@ -218,7 +218,7 @@ func init() {
 		`server mode: accept incoming files from any host. Operate in client mode if
 “–s” is not specified.`)
 
-	rootCmd.Flags().IntVarP(&t, "port", "t", 0, "specify the port number to use")
+	rootCmd.Flags().IntVarP(&t, "port", "t", 2020, "specify the port number to use")
 
 	rootCmd.PersistentFlags().Float32VarP(&p, "p", "p", -1,
 		`specify the loss probabilities for the Markov chain model (0 <= p <= 1). If

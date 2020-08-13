@@ -129,22 +129,23 @@ var rootCmd = &cobra.Command{
 
 type progressReader struct {
 	req  *rftp.FileResponse
-	done int
+	done int64
 }
 
 func (r *progressReader) Read(p []byte) (n int, err error) {
-	printProgress(r.done, int(r.req.Size()))
+	printProgress(r.done, int64(r.req.Size()))
 	n, err = r.req.Read(p)
-	r.done += n
+	r.done += int64(n)
 	return n, err
 }
 
-func printProgress(done, total int) {
+func printProgress(done, total int64) {
+	fmt.Printf("\r")
 	if total <= 0 {
-		fmt.Printf("\r%v/%v", done, total)
+		fmt.Printf("received %v", ByteCountIEC(done))
 	} else {
 		p := (float32(done) / float32(total)) * 100
-		fmt.Printf("\r%3.2f%%      ", p)
+		fmt.Printf("received %v of %v: %3.2f%%      ", ByteCountIEC(done), ByteCountIEC(total), p)
 	}
 }
 
@@ -188,12 +189,28 @@ func directoryHandler(dirname string) (rftp.FileHandler, error) {
 				if err != nil {
 					return nil, err
 				}
-				log.Printf("handling file: %v, size: %v\n", file, f.info.Size())
+				fmt.Printf("handling file: %v, size: %v\n", file.Name(), ByteCountIEC(f.info.Size()))
 				return io.NewSectionReader(file, 0, f.info.Size()), nil
 			}
 		}
 		return nil, errors.New("file not found")
 	}, nil
+}
+
+// ByteCountIEC prints bytes in human readable format, taken from here:
+// https://yourbasic.org/golang/formatting-byte-size-to-human-readable-format/
+func ByteCountIEC(b int64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB",
+		float64(b)/float64(div), "KMGTPE"[exp])
 }
 
 func init() {

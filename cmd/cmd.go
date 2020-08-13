@@ -106,14 +106,18 @@ var rootCmd = &cobra.Command{
 			}
 
 			if !debug {
-				r := &progressReader{req, 0}
-				io.Copy(w, r)
 				fi, err := os.Stat(path)
+				r := &progressReader{req, 0, fi.Name()}
+				io.Copy(w, r)
 				if err != nil {
 					log.Panic(err)
 				}
-				printProgress(fi.Size(), int64(req.Size()))
-				fmt.Println()
+				printProgress(fi.Name(), fi.Size(), int64(req.Size()))
+				if req.Err != nil {
+					fmt.Printf("err: %v\n", req.Err)
+				} else {
+					fmt.Println("success")
+				}
 			} else {
 				io.Copy(w, req)
 			}
@@ -121,7 +125,7 @@ var rootCmd = &cobra.Command{
 			if req.Err != nil {
 				log.Printf("File %s error: %s", files[i], req.Err)
 			} else {
-				log.Printf("File %s received (checksum is valid)", files[i])
+				log.Printf("File %s received (checksum is valid)\n", files[i])
 			}
 		}
 
@@ -135,22 +139,23 @@ var rootCmd = &cobra.Command{
 type progressReader struct {
 	req  *rftp.FileResponse
 	done int64
+	name string
 }
 
 func (r *progressReader) Read(p []byte) (n int, err error) {
-	printProgress(r.done, int64(r.req.Size()))
+	printProgress(r.name, r.done, int64(r.req.Size()))
 	n, err = r.req.Read(p)
 	r.done += int64(n)
 	return n, err
 }
 
-func printProgress(done, total int64) {
+func printProgress(filename string, done, total int64) {
 	fmt.Printf("\r")
 	if total <= 0 {
-		fmt.Printf("received %v", byteCountIEC(done))
+		fmt.Printf("%v received %v", filename, byteCountIEC(done))
 	} else {
 		p := (float32(done) / float32(total)) * 100
-		fmt.Printf("received %v of %v: %3.2f%%      ", byteCountIEC(done), byteCountIEC(total), p)
+		fmt.Printf("%v received %v of %v: %3.2f%%      ", filename, byteCountIEC(done), byteCountIEC(total), p)
 	}
 }
 

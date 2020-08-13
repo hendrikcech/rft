@@ -152,6 +152,7 @@ func (c *clientConnection) rescheduler() {
 		case <-closeChan:
 			return
 		case p := <-c.resendDone:
+			log.Printf("delete rescheduled entry: file %v at offset %v\n", p.fileIndex, p.offset)
 			delete(resendScheduled[p.fileIndex], p.offset)
 		case ack := <-c.reschedule:
 			// use a map to avoid duplicates in metadata resend entries
@@ -183,11 +184,13 @@ func (c *clientConnection) rescheduler() {
 					if p, ok := c.getFromCache(re.fileIndex, re.offset); ok {
 						if re.length == 0 {
 							c.resend <- p
+							log.Printf("rescheduled: file %v at %v\n", re.fileIndex, re.offset)
 						}
 
 						for i := uint64(0); i < uint64(re.length); i++ {
 							if p, ok := c.getFromCache(re.fileIndex, re.offset+i); ok {
 								c.resend <- p
+								log.Printf("rescheduled: file %v at %v\n", re.fileIndex, re.offset+i)
 							} else {
 								log.Printf("didn't find resend entry in cache: %v\n", re.offset+i)
 								break
@@ -197,6 +200,8 @@ func (c *clientConnection) rescheduler() {
 							}
 						}
 					}
+				} else {
+					log.Printf("skipped rescheduling for: file %v at %v\n", re.fileIndex, re.offset)
 				}
 			}
 

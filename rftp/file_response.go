@@ -10,6 +10,7 @@ import (
 	"log"
 	"sort"
 	"sync"
+	"time"
 )
 
 type FileResponse struct {
@@ -25,6 +26,7 @@ type FileResponse struct {
 	buffer        *chunkQueue
 	maxBufferSize int
 	resendEntries map[uint64]struct{}
+	rerequested   map[uint64]time.Time
 	outOfOrder    map[uint64]struct{}
 	head          uint64
 	metadata      bool
@@ -57,6 +59,7 @@ func newFileResponse(name string, index uint16) *FileResponse {
 		buffer:        newChunkQueue(index),
 		maxBufferSize: 10 * 1024,
 		resendEntries: make(map[uint64]struct{}),
+		rerequested:   make(map[uint64]time.Time),
 		hasher:        md5.New(),
 
 		outOfOrder: make(map[uint64]struct{}),
@@ -109,30 +112,37 @@ func (f *FileResponse) getResendEntries(max int) *resendData {
 			break
 		}
 		if _, ok := f.outOfOrder[uint64(offset)]; !ok {
-			res = append(res, &resendEntry{
-				fileIndex: f.index,
-				offset:    uint64(offset),
-				length:    1,
-			})
+			if t, ok := f.rerequested[uint64(offset)]; !ok || time.Since(t) > 500*time.Millisecond {
+				log.Printf("re-requesting file %v at offset %v\n", f.index, offset)
+				f.rerequested[uint64(offset)] = time.Now()
+				res = append(res, &resendEntry{
+					fileIndex: f.index,
+					offset:    uint64(offset),
+					length:    1,
+				})
+			}
 		}
 	}
 
 	if !f.metadata {
-		res = append(res, &resendEntry{
-			fileIndex: f.index,
-			offset:    f.head,
-			length:    0,
-		})
+		if t, ok := f.rerequested[uint64(f.head)]; !ok || time.Since(t) > 500*time.Millisecond {
+			f.rerequested[uint64(f.head)] = time.Now()
+			res = append(res, &resendEntry{
+				fileIndex: f.index,
+				offset:    f.head,
+				length:    0,
+			})
+		}
 	}
-	// This would be a nice addition to force a server to be more aggressive,
-	// but does only work, when a server sends resend entries sorted from low to
-	// high. Otherwise the client get's stuck because it will repeatedly
-	// re-request these chunks and the server only always resends the same
-	// chunks.
-	//else if f.head < f.chunks {
+	//	else if f.head < f.chunks {
+	//		// This would be a nice addition to force a server to be more aggressive,
+	//		// but does only work, when a server sends resend entries sorted from low to
+	//		// high. Otherwise the client get's stuck because it will repeatedly
+	//		// re-request these chunks and the server only always resends the same
+	//		// chunks.
 	//		l := f.chunks - f.head
 	//		for l > 255 {
-	//			res = append(res, &ResendEntry{
+	//			res = append(res, &resendEntry{
 	//				fileIndex: f.index,
 	//				offset:    f.head,
 	//				length:    255,
@@ -140,13 +150,13 @@ func (f *FileResponse) getResendEntries(max int) *resendData {
 	//			l -= 255
 	//		}
 	//		if l > 0 {
-	//			res = append(res, &ResendEntry{
+	//			res = append(res, &resendEntry{
 	//				fileIndex: f.index,
 	//				offset:    f.head,
 	//				length:    uint8(l),
 	//			})
 	//		}
-	//}
+	//	}
 	return &resendData{
 		started:    (f.head > 0) || f.buffer.Len() > 0,
 		metadata:   f.metadata,

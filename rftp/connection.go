@@ -198,6 +198,7 @@ func sendTo(writer io.Writer, msg encoding.BinaryMarshaler) error {
 	case serverMetaData:
 		header.msgType = msgServerMetadata
 	case serverPayload:
+		log.Printf("sending payload: file %v at offset %v\n", v.fileIndex, v.offset)
 		header.msgType = msgServerPayload
 		header.ackNum = v.ackNumber
 	case closeConnection:

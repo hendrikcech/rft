@@ -43,6 +43,7 @@ var testfiles = tests([]testfile{
 	{size: 1 * 1000, timeout: 5 * time.Second},
 	{size: 100 * 1024, timeout: 20 * time.Second},
 	{size: 1000 * 1024, timeout: 1 * time.Minute},
+	{size: 10 * 1024 * 1024, timeout: 1 * time.Minute},
 })
 
 type runner struct {
@@ -223,9 +224,9 @@ Use the -s flag to only run tests of a certain file, currently configured are:
 				duration := time.Since(start)
 
 				if compareFiles(filepath.Join(r.src, tf.name), filepath.Join(r.dest, tf.name)) {
-					log.Printf("succesfully transferred file of size %v bytes in %v\n", tf.size, duration)
+					log.Printf("succesfully transferred file of size %v bytes in %v\n", byteCountIEC(tf.size), duration)
 				} else {
-					log.Printf("incorrectly transferred file of size %v bytes in %v\n", tf.size, duration)
+					log.Printf("incorrectly transferred file of size %v bytes in %v\n", byteCountIEC(tf.size), duration)
 				}
 			}
 

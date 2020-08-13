@@ -89,7 +89,7 @@ func (c *aimd) notifyAvailable() {
 // at this moment.
 func (c *aimd) isAvailable() bool {
 	sent := atomic.LoadUint32(&c.sent)
-	//	log.Printf("isAvailable: sent: %v, c.congRate: %v, c.flowRate: %v\n", sent, c.congRate, c.flowRate)
+	//log.Printf("isAvailable: sent: %v, c.congRate: %v, c.flowRate: %v\n", sent, c.congRate, c.flowRate)
 	if c.flowRate > 0 {
 		return sent < c.congRate && sent < c.flowRate
 	}
@@ -114,8 +114,11 @@ func (c *aimd) onAck(ack *clientAck) {
 
 	c.flowRate = ack.maxTransmissionRate
 
-	if len(ack.resendEntries) > 0 {
-		c.congRate += c.congRate / 2
+	if len(ack.resendEntries) < 10 {
+		// prevent overflow
+		if c.congRate < 1073741824 {
+			c.congRate += c.congRate / 2
+		}
 	} else if c.decreaseCoolOffPeriod == 0 {
 		c.congRate /= 2
 		c.decreaseCoolOffPeriod = aimdDecreaseCoolOffPeriod

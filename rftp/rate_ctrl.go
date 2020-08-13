@@ -37,7 +37,6 @@ type aimd struct {
 	flowRate              uint32
 	sent                  uint32
 	lastAck               uint8
-	lastResendEntries     int
 	decreaseCoolOffPeriod uint8
 
 	resetTicker         *time.Ticker
@@ -115,7 +114,7 @@ func (c *aimd) onAck(ack *clientAck) {
 
 	c.flowRate = ack.maxTransmissionRate
 
-	if len(ack.resendEntries) <= c.lastResendEntries {
+	if len(ack.resendEntries) > 0 {
 		c.congRate += c.congRate / 2
 	} else if c.decreaseCoolOffPeriod == 0 {
 		c.congRate /= 2
@@ -123,7 +122,6 @@ func (c *aimd) onAck(ack *clientAck) {
 	}
 
 	c.lastAck = ack.ackNumber
-	c.lastResendEntries = len(ack.resendEntries)
 	if c.isAvailable() {
 		c.notifyAvailable()
 	}

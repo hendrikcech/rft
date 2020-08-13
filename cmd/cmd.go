@@ -142,10 +142,10 @@ func (r *progressReader) Read(p []byte) (n int, err error) {
 func printProgress(done, total int64) {
 	fmt.Printf("\r")
 	if total <= 0 {
-		fmt.Printf("received %v", ByteCountIEC(done))
+		fmt.Printf("received %v", byteCountIEC(done))
 	} else {
 		p := (float32(done) / float32(total)) * 100
-		fmt.Printf("received %v of %v: %3.2f%%      ", ByteCountIEC(done), ByteCountIEC(total), p)
+		fmt.Printf("received %v of %v: %3.2f%%      ", byteCountIEC(done), byteCountIEC(total), p)
 	}
 }
 
@@ -189,7 +189,7 @@ func directoryHandler(dirname string) (rftp.FileHandler, error) {
 				if err != nil {
 					return nil, err
 				}
-				fmt.Printf("handling file: %v, size: %v\n", file.Name(), ByteCountIEC(f.info.Size()))
+				fmt.Printf("handling file: %v, size: %v\n", file.Name(), byteCountIEC(f.info.Size()))
 				return io.NewSectionReader(file, 0, f.info.Size()), nil
 			}
 		}
@@ -197,9 +197,9 @@ func directoryHandler(dirname string) (rftp.FileHandler, error) {
 	}, nil
 }
 
-// ByteCountIEC prints bytes in human readable format, taken from here:
+// byteCountIEC prints bytes in human readable format, taken from here:
 // https://yourbasic.org/golang/formatting-byte-size-to-human-readable-format/
-func ByteCountIEC(b int64) string {
+func byteCountIEC(b int64) string {
 	const unit = 1024
 	if b < unit {
 		return fmt.Sprintf("%d B", b)

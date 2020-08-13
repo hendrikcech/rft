@@ -140,7 +140,7 @@ func (c *Client) waitForFirstResponse(try int) error {
 }
 
 func (c *Client) sendAcks(conn connection) {
-	timeout := time.NewTimer(1 * time.Millisecond)
+	timeout := time.NewTimer(500 * time.Millisecond)
 	ackNumWaitingMap := map[uint8]bool{}
 	ackSendTimeMap := map[uint8]time.Time{}
 	nextAckNum := uint8(1)
@@ -149,7 +149,7 @@ func (c *Client) sendAcks(conn connection) {
 	for {
 		select {
 		case <-timeout.C:
-			if time.Since(lastPing) > 1*time.Second+10000*c.rtt {
+			if time.Since(lastPing) > 3*time.Second+3*c.rtt {
 				log.Println("connection timed out")
 				c.err <- struct{}{}
 				continue
@@ -198,8 +198,13 @@ func (c *Client) sendAcks(conn connection) {
 			if nextAckNum == 0 {
 				nextAckNum++
 			}
-			//timeout = time.NewTimer(500 * time.Millisecond)
-			timeout = time.NewTimer(c.rtt)
+			if c.rtt > 500*time.Millisecond {
+				timeout = time.NewTimer(500 * time.Millisecond)
+			} else if c.rtt < 10*time.Millisecond {
+				timeout = time.NewTimer(5 * time.Millisecond)
+			} else {
+				timeout = time.NewTimer(c.rtt)
+			}
 
 		case ackNum := <-c.ack:
 			if waiting, ok := ackNumWaitingMap[ackNum]; ok && waiting {

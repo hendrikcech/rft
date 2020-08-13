@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"os"
 
@@ -18,10 +19,11 @@ import (
 )
 
 var (
-	s    bool
-	t    int
-	p, q float32
-	out  string
+	s     bool
+	t     int
+	p, q  float32
+	out   string
+	debug bool
 )
 
 var rootCmd = &cobra.Command{
@@ -39,6 +41,10 @@ var rootCmd = &cobra.Command{
 			p = q
 		} else if p != -1 && q == -1 {
 			q = p
+		}
+
+		if !debug {
+			log.SetOutput(ioutil.Discard)
 		}
 
 		if s {
@@ -62,8 +68,6 @@ var rootCmd = &cobra.Command{
 			return
 		}
 
-		// uncomment to disable logging
-		//log.SetOutput(ioutil.Discard)
 		if info, err := os.Stat(out); out != "-" && (err != nil || !info.IsDir()) {
 			log.Printf("Invalid out path")
 			return
@@ -101,7 +105,13 @@ var rootCmd = &cobra.Command{
 				}
 			}
 
-			io.Copy(w, req)
+			if !debug {
+				r := &progressReader{req, 0}
+				io.Copy(w, r)
+				fmt.Println()
+			} else {
+				io.Copy(w, req)
+			}
 
 			if req.Err != nil {
 				log.Printf("File %s error: %s", files[i], req.Err)
@@ -117,13 +127,34 @@ var rootCmd = &cobra.Command{
 	},
 }
 
+type progressReader struct {
+	req  *rftp.FileResponse
+	done int
+}
+
+func (r *progressReader) Read(p []byte) (n int, err error) {
+	printProgress(r.done, int(r.req.Size()))
+	n, err = r.req.Read(p)
+	r.done += n
+	return n, err
+}
+
+func printProgress(done, total int) {
+	if total <= 0 {
+		fmt.Printf("\r%v/%v", done, total)
+	} else {
+		p := (float32(done) / float32(total)) * 100
+		fmt.Printf("\r%3.2f%%      ", p)
+	}
+}
+
 func directoryHandler(dirname string) (rftp.FileHandler, error) {
 	info, err := os.Stat(dirname)
 	if err != nil {
 		return nil, err
 	}
 	if !info.IsDir() {
-		return nil, fmt.Errorf("Is file, not directory")
+		return nil, fmt.Errorf("is file, not directory")
 	}
 
 	type file struct {
@@ -183,6 +214,7 @@ only one is specified, assume p=q; if neither is specified assume no loss`)
 	rootCmd.Flags().StringVarP(&out, "out", "o", ".",
 		`specify the directory in which the requested files are going to be stored;
 set to '-' to redirect file content to stdout`)
+	rootCmd.Flags().BoolVarP(&debug, "d", "d", false, "print debug output")
 
 	rootCmd.Flags().SortFlags = false
 	rootCmd.PersistentFlags().SortFlags = false

@@ -12,10 +12,6 @@ import (
 	"sync"
 )
 
-func print(done, queue, total uint64) {
-	//fmt.Printf("\r%v/%v/%v", done, queue, total)
-}
-
 type FileResponse struct {
 	index uint16
 	Name  string
@@ -39,6 +35,10 @@ type FileResponse struct {
 	chunks   uint64
 	checksum [16]byte
 	Err      error
+}
+
+func (f *FileResponse) Size() uint64 {
+	return f.size
 }
 
 func newFileResponse(name string, index uint16) *FileResponse {
@@ -231,7 +231,6 @@ func (f *FileResponse) write(done chan<- uint16) {
 		}
 
 		log.Printf("file %v at head %v and buffer size %v\n", f.index, f.head, f.buffer.Len())
-		print(f.head, uint64(f.buffer.Len()), f.chunks)
 		if f.metadata && f.head >= f.chunks && f.buffer.Len() == 0 {
 			return
 		}

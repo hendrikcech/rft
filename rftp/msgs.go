@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"log"
 	"math"
 	"sort"
 	"strings"
@@ -218,7 +217,6 @@ func (s *clientRequest) UnmarshalBinary(data []byte) error {
 		s.files[i] = f
 	}
 
-	log.Printf("parsed CR: %v\n", s)
 	return nil
 }
 

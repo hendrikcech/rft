@@ -115,8 +115,8 @@ func getServerClientCombinations(binaries []string, p, q float32) []combination 
 	for _, bs := range binaries {
 		for _, bc := range binaries {
 			c := combination{
-				server: []string{bs, "-s", "-q", fmt.Sprintf("%f", q), "-p", fmt.Sprintf("%f", p), "-t", "8080", "0.0.0.0"},
-				client: []string{bc, "localhost", "-q", fmt.Sprintf("%f", q), "-p", fmt.Sprintf("%f", p), "-t", "8080"},
+				server: []string{bs, "-s", "-v", "-q", fmt.Sprintf("%f", q), "-p", fmt.Sprintf("%f", p), "-t", "8080", "0.0.0.0"},
+				client: []string{bc, "localhost", "-v", "-q", fmt.Sprintf("%f", q), "-p", fmt.Sprintf("%f", p), "-t", "8080"},
 			}
 
 			cc = append(cc, c)

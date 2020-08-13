@@ -238,7 +238,7 @@ only one is specified, assume p=q; if neither is specified assume no loss`)
 	rootCmd.Flags().StringVarP(&out, "out", "o", ".",
 		`specify the directory in which the requested files are going to be stored;
 set to '-' to redirect file content to stdout`)
-	rootCmd.Flags().BoolVarP(&debug, "d", "d", false, "print debug output")
+	rootCmd.Flags().BoolVarP(&debug, "v", "v", false, "print debug output")
 
 	rootCmd.Flags().SortFlags = false
 	rootCmd.PersistentFlags().SortFlags = false

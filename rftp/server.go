@@ -431,6 +431,7 @@ func (s *Server) handleRequest(w io.Writer, p *packet) {
 	//y := 20 * time.Second
 	//w = getUnreliableWriter(w, x, y)
 
+	log.Printf("handling cr from %v: %v\n", p.remoteAddr, p)
 	cr := &clientRequest{}
 	err := cr.UnmarshalBinary(p.data)
 	if err != nil {
@@ -449,6 +450,7 @@ func (s *Server) handleRequest(w io.Writer, p *packet) {
 			req:    cr,
 
 			cleaner: cleaner{cb: func() {
+				log.Printf("Trying to close Conn: %v. Current number of connections: %v\n", key, len(s.clients))
 				s.clientMux.Lock()
 				defer s.clientMux.Unlock()
 				delete(s.clients, key)
